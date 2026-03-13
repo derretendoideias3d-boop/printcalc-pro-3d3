@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Budget": {
+      "title": "Budget",
+      "description": "Saved 3D printing budget",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "clientName": { "type": "string" },
+        "fileName": { "type": "string" },
+        "date": { "type": "string" },
+        "results": { "type": "object" },
+        "details": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "clientName", "fileName", "results", "details"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profile documents"
+    },
+    "/budgets/{budgetId}": {
+      "schema": "Budget",
+      "description": "Budget documents"
+    }
+  }
+}
