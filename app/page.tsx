@@ -7,6 +7,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stage, Center, Environment } from '@react-three/drei';
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import JSZip from 'jszip';
@@ -35,6 +36,7 @@ import {
   User,
   Share2,
   Truck,
+  MessageCircle,
   LogOut,
   LogIn,
   UserPlus,
@@ -773,6 +775,7 @@ export default function Calculator() {
         const itemRows = budget.items.map((item, index) => [
           index + 1,
           item.name || `Peça ${index + 1}`,
+          item.quantity || 1,
           `${item.weight}g`,
           `${item.time}h`,
           `R$ ${(item.price || 0).toFixed(2)}`
@@ -780,7 +783,7 @@ export default function Calculator() {
 
         autoTable(doc, {
           startY: currentY + 5,
-          head: [['#', 'Nome da Peça', 'Peso', 'Tempo', 'Valor']],
+          head: [['#', 'Nome da Peça', 'Qtd', 'Peso', 'Tempo', 'Valor']],
           body: itemRows,
           theme: 'grid',
           headStyles: { fillColor: [100, 100, 100] },
@@ -834,10 +837,42 @@ export default function Calculator() {
         doc.text(`Preço Final: R$ ${results.finalPrice.toFixed(2)}`, 14, currentY + 20);
       }
 
-      doc.save(`Orcamento_${budget.clientName || 'Cliente'}_${budget.fileName || 'Projeto'}.pdf`);
+      return doc;
     } catch (error) {
       console.error("Erro crítico ao gerar PDF:", error);
+      throw error;
+    }
+  };
+
+  const downloadPDF = async () => {
+    try {
+      const doc = await generatePDF();
+      doc.save(`Orcamento_${budget.clientName || 'Cliente'}_${budget.fileName || 'Projeto'}.pdf`);
+    } catch (error) {
       alert("Não foi possível gerar o PDF. Verifique se o seu navegador permite downloads.");
+    }
+  };
+
+  const sharePDF = async () => {
+    try {
+      const doc = await generatePDF();
+      const pdfBlob = doc.output('blob');
+      const file = new File([pdfBlob], `Orcamento_${budget.clientName || 'Cliente'}.pdf`, { type: 'application/pdf' });
+
+      if (navigator.share && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: 'Orçamento de Impressão 3D',
+          text: `Olá ${budget.clientName}, segue o orçamento para o seu projeto.`
+        });
+      } else {
+        // Fallback to download
+        doc.save(`Orcamento_${budget.clientName || 'Cliente'}.pdf`);
+        alert('O seu navegador não suporta compartilhamento direto de arquivos. O PDF foi baixado para que você possa enviar manualmente.');
+      }
+    } catch (error) {
+      console.error('Erro ao compartilhar PDF:', error);
+      alert('Ocorreu um erro ao gerar ou compartilhar o PDF.');
     }
   };
 
@@ -1584,13 +1619,15 @@ _Derretendo Ideias 3D_`;
                 Voltar
               </button>
             )}
-            <button 
-              onClick={step < 3 ? nextStep : () => alert('Relatório Gerado!')}
-              className="flex-[2] bg-gradient-to-r from-blue-600 to-indigo-500 hover:from-blue-500 hover:to-indigo-400 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-900/40 transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
-            >
-              {step < 3 ? 'Próximo Passo' : 'Gerar Relatório'}
-              <ChevronRight size={20} />
-            </button>
+            {step < 3 && (
+              <button 
+                onClick={nextStep}
+                className="flex-[2] bg-gradient-to-r from-blue-600 to-indigo-500 hover:from-blue-500 hover:to-indigo-400 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-900/40 transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
+              >
+                Próximo Passo
+                <ChevronRight size={20} />
+              </button>
+            )}
           </div>
           
           {step === 3 && (
@@ -1600,15 +1637,15 @@ _Derretendo Ideias 3D_`;
                   onClick={sendWhatsApp}
                   className="w-full bg-[#25D366] hover:bg-[#20ba5a] text-white font-black py-4 rounded-2xl shadow-lg shadow-green-900/20 transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
                 >
-                  <Zap size={20} fill="white" />
-                  Enviar WhatsApp
+                  <MessageCircle size={20} />
+                  WhatsApp
                 </button>
                 <button 
-                  onClick={generatePDF}
+                  onClick={sharePDF}
                   className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-900/20 transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
                 >
-                  <FileText size={20} />
-                  Gerar PDF
+                  <Share2 size={20} />
+                  Compartilhar PDF
                 </button>
               </div>
 
