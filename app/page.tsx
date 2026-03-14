@@ -7,7 +7,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stage, Center, Environment } from '@react-three/drei';
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import JSZip from 'jszip';
 import { 
@@ -37,7 +37,9 @@ import {
   LogOut,
   LogIn,
   UserPlus,
-  Edit2
+  Edit2,
+  Plus,
+  Minus
 } from 'lucide-react';
 import { auth, db } from './firebase';
 import { 
@@ -376,8 +378,9 @@ export default function Calculator() {
     clientNotes: "",
     fileName: "",
     projectImage: null as string | null,
-    weight: 50,
-    time: 2.5,
+    items: [
+      { id: Date.now().toString(), name: "Peça 1", weight: 50, time: 2.5, price: 0 }
+    ],
     energyPrice: 0.85, // R$/kWh
     failRisk: 10, // %
     laborCost: 0,
@@ -403,9 +406,13 @@ export default function Calculator() {
   const [uploadedFile, setUploadedFile] = useState<{ url: string | null, type: string | null }>({ url: null, type: null });
 
   const results = useMemo(() => {
-    const materialCost = (budget.weight / 1000) * filament.pricePerKg;
-    const energyCost = (budget.time * printer.power / 1000) * budget.energyPrice;
-    const wearCost = budget.time * 0.5; // R$ 0.50 per hour for wear/maintenance
+    const totalWeight = budget.items.reduce((sum, item) => sum + (item.weight || 0), 0);
+    const totalTime = budget.items.reduce((sum, item) => sum + (item.time || 0), 0);
+    const totalItemsPrice = budget.items.reduce((sum, item) => sum + (item.price || 0), 0);
+
+    const materialCost = (totalWeight / 1000) * filament.pricePerKg;
+    const energyCost = (totalTime * printer.power / 1000) * budget.energyPrice;
+    const wearCost = totalTime * 0.5; // R$ 0.50 per hour for wear/maintenance
     const failRiskCost = (materialCost + energyCost + wearCost) * (budget.failRisk / 100);
     
     const totalMfgCost = materialCost + energyCost + wearCost + failRiskCost + budget.laborCost + budget.packagingCost;
@@ -414,9 +421,17 @@ export default function Calculator() {
     const subtotal = totalMfgCost + markupAmount + budget.shippingCost;
     
     const feeAmount = subtotal * (budget.platformFee / 100);
-    const finalPrice = subtotal + feeAmount;
+    // If manual prices are set, we might want to use them, but for now let's just keep the automatic calculation
+    // and maybe show the manual total as a reference or use it if it's > 0.
+    // However, usually users want the manual price to be the final price.
+    // Let's make it so if totalItemsPrice > 0, we use it as the subtotal (before shipping and fees)
+    const basePrice = totalItemsPrice > 0 ? totalItemsPrice : subtotal;
+    const finalPrice = basePrice + feeAmount;
 
     return {
+      totalWeight,
+      totalTime,
+      totalItemsPrice,
       materialCost,
       energyCost,
       wearCost,
@@ -452,8 +467,9 @@ export default function Calculator() {
       clientNotes: "",
       fileName: "",
       projectImage: null,
-      weight: 50,
-      time: 2.5,
+      items: [
+        { id: Date.now().toString(), name: "Peça 1", weight: 50, time: 2.5, price: 0 }
+      ],
       energyPrice: 0.85,
       failRisk: 10,
       laborCost: 0,
@@ -540,8 +556,9 @@ export default function Calculator() {
       clientNotes: b.clientNotes || "",
       fileName: b.fileName || "",
       projectImage: b.projectImage || null,
-      weight: b.weight || 0,
-      time: b.time || 0,
+      items: b.items || [
+        { id: Date.now().toString(), name: b.fileName || "Peça 1", weight: b.weight || 0, time: b.time || 0, price: 0 }
+      ],
       energyPrice: b.energyPrice || 0.85,
       failRisk: b.failRisk || 10,
       laborCost: b.laborCost || 0,
@@ -557,124 +574,173 @@ export default function Calculator() {
   };
 
   const generatePDF = async () => {
-    const doc = new jsPDF();
-    
-    // --- Logo Header (Recreating the visual style) ---
-    // Blue Rounded Square for Icon
-    doc.setFillColor(37, 99, 235); // Blue-600
-    doc.roundedRect(14, 15, 15, 15, 3, 3, 'F');
-    
-    // Simple Printer Icon inside square
-    doc.setDrawColor(255, 255, 255);
-    doc.setLineWidth(0.8);
-    doc.rect(17.5, 21, 8, 5); // Body
-    doc.line(19, 21, 19, 18); // Top
-    doc.line(24, 21, 24, 18);
-    doc.line(19, 18, 24, 18);
-    doc.line(19.5, 24, 23.5, 24); // Paper slot
+    try {
+      // Standard imports for jspdf often fail in SSR/Bundled environments
+      // Using a more robust dynamic import pattern
+      const jsPDFModule = await import('jspdf');
+      const jsPDFConstructor = jsPDFModule.jsPDF || jsPDFModule.default;
+      
+      if (!jsPDFConstructor) {
+        throw new Error("Não foi possível carregar a biblioteca PDF.");
+      }
 
-    // Logo Text "PRINTCALC"
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(22);
-    doc.setTextColor(0, 0, 0);
-    doc.text('PRINTCALC', 35, 24);
-    
-    // Logo Text "PRO"
-    doc.setTextColor(37, 99, 235);
-    doc.text('PRO', 85, 24);
-    
-    // Subtext
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(100, 100, 100);
-    doc.text('INTELIGÊNCIA EM CUSTOS 3D', 35, 29);
-    doc.text('DERRETENDO IDEIAS 3D', 35, 33);
+      const { default: autoTable } = await import('jspdf-autotable');
 
-    // --- Document Info ---
-    doc.setTextColor(0, 0, 0);
-    doc.setFontSize(10);
-    doc.text(`CLIENTE: ${(budget.clientName || 'N/A').toUpperCase()}`, 14, 45);
-    if (budget.clientPhone) doc.text(`CONTATO: ${budget.clientPhone}`, 14, 50);
-    if (budget.clientEmail) doc.text(`E-MAIL: ${budget.clientEmail}`, 14, 55);
-    doc.text(`PROJETO: ${(budget.fileName || 'N/A').toUpperCase()}`, 14, 60);
-    doc.text(`DATA: ${new Date().toLocaleDateString()}`, 14, 65);
+      const doc = new (jsPDFConstructor as any)();
+      
+      // --- Logo Header ---
+      doc.setFillColor(37, 99, 235);
+      doc.roundedRect(14, 15, 15, 15, 3, 3, 'F');
+      
+      doc.setDrawColor(255, 255, 255);
+      doc.setLineWidth(0.8);
+      doc.rect(17.5, 21, 8, 5);
+      doc.line(19, 21, 19, 18);
+      doc.line(24, 21, 24, 18);
+      doc.line(19, 18, 24, 18);
+      doc.line(19.5, 24, 23.5, 24);
 
-    let currentY = 75;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(22);
+      doc.setTextColor(0, 0, 0);
+      doc.text('PRINTCALC', 35, 24);
+      
+      doc.setTextColor(37, 99, 235);
+      doc.text('PRO', 85, 24);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(100, 100, 100);
+      doc.text('INTELIGÊNCIA EM CUSTOS 3D', 35, 29);
+      doc.text('DERRETENDO IDEIAS 3D', 35, 33);
 
-    // --- Project Image (Selected Piece) ---
-    if (budget.projectImage) {
-      try {
-        const img = new window.Image();
-        img.src = budget.projectImage;
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
+      // --- Document Info ---
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(10);
+      doc.text(`CLIENTE: ${(budget.clientName || 'N/A').toUpperCase()}`, 14, 45);
+      if (budget.clientPhone) doc.text(`CONTATO: ${budget.clientPhone}`, 14, 50);
+      if (budget.clientEmail) doc.text(`E-MAIL: ${budget.clientEmail}`, 14, 55);
+      doc.text(`PROJETO: ${(budget.fileName || 'N/A').toUpperCase()}`, 14, 60);
+      doc.text(`DATA: ${new Date().toLocaleDateString()}`, 14, 65);
+
+      let currentY = 75;
+
+      // --- Project Image ---
+      if (budget.projectImage) {
+        try {
+          const img = new window.Image();
+          img.src = budget.projectImage;
+          
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            setTimeout(() => reject(new Error("Timeout loading image")), 3000);
+          });
+          
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0);
+          const base64 = canvas.toDataURL('image/jpeg', 0.7);
+          
+          const maxWidth = 80;
+          const maxHeight = 60;
+          let width = img.width;
+          let height = img.height;
+          
+          const ratio = Math.min(maxWidth / width, maxHeight / height);
+          width *= ratio;
+          height *= ratio;
+
+          doc.addImage(base64, 'JPEG', 14, 75, width, height);
+          
+          doc.setFontSize(8);
+          doc.setTextColor(150, 150, 150);
+          doc.text('Referência Visual da Peça', 14, 75 + height + 5);
+          
+          currentY = 75 + height + 15;
+        } catch (e) {
+          console.error("Erro ao processar imagem para o PDF", e);
+          currentY = 75;
+        }
+      }
+
+      // --- Items Table ---
+      if (typeof autoTable === 'function') {
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.text('PEÇAS DO PROJETO', 14, currentY);
+        
+        const itemRows = budget.items.map((item, index) => [
+          index + 1,
+          item.name || `Peça ${index + 1}`,
+          `${item.weight}g`,
+          `${item.time}h`,
+          `R$ ${(item.price || 0).toFixed(2)}`
+        ]);
+
+        autoTable(doc, {
+          startY: currentY + 5,
+          head: [['#', 'Nome da Peça', 'Peso', 'Tempo', 'Valor']],
+          body: itemRows,
+          theme: 'grid',
+          headStyles: { fillColor: [100, 100, 100] },
+          styles: { fontSize: 8 }
+        });
+
+        const lastTable = (doc as any).lastAutoTable;
+        currentY = (lastTable && lastTable.finalY) ? lastTable.finalY + 15 : 
+                   (lastTable && lastTable.cursor) ? lastTable.cursor.y + 15 : currentY + 40;
+
+        // --- Budget Summary Table ---
+        autoTable(doc, {
+          startY: currentY,
+          head: [['Resumo Financeiro', 'Valor']],
+          body: [
+            ['Material', `${filament.brand} ${filament.type}`],
+            ['Total de Peso', `${results.totalWeight}g`],
+            ['Total de Tempo', `${results.totalTime}h`],
+            ['Custo de Material', `R$ ${results.materialCost.toFixed(2)}`],
+            ['Custo de Energia', `R$ ${results.energyCost.toFixed(2)}`],
+            ['Mão de Obra', `R$ ${budget.laborCost.toFixed(2)}`],
+            ['Embalagem', `R$ ${budget.packagingCost.toFixed(2)}`],
+            ['Frete / Envio', `R$ ${budget.shippingCost.toFixed(2)}`],
+            ['Taxas de Plataforma', `R$ ${results.feeAmount.toFixed(2)}`],
+            ['PREÇO FINAL', `R$ ${results.finalPrice.toFixed(2)}`],
+          ],
+          theme: 'striped',
+          headStyles: { fillColor: [37, 99, 235] },
+          styles: { fontSize: 9, cellPadding: 3 },
+          columnStyles: {
+            1: { halign: 'right', fontStyle: 'bold' }
+          }
         });
         
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0);
-        const base64 = canvas.toDataURL('image/jpeg', 0.8);
-        
-        // Calculate dimensions to fit nicely
-        const maxWidth = 80;
-        const maxHeight = 60;
-        let width = img.width;
-        let height = img.height;
-        
-        const ratio = Math.min(maxWidth / width, maxHeight / height);
-        width *= ratio;
-        height *= ratio;
-
-        doc.addImage(base64, 'JPEG', 14, 75, width, height);
-        
-        doc.setFontSize(8);
-        doc.setTextColor(150, 150, 150);
-        doc.text('Referência Visual da Peça', 14, 75 + height + 5);
-        
-        currentY = 75 + height + 15;
-      } catch (e) {
-        console.error("Erro ao processar imagem para o PDF", e);
+        if (budget.clientNotes) {
+          const lastTableSummary = (doc as any).lastAutoTable;
+          const finalY = (lastTableSummary && lastTableSummary.finalY) ? lastTableSummary.finalY + 10 :
+                         (lastTableSummary && lastTableSummary.cursor) ? lastTableSummary.cursor.y + 10 : currentY + 20;
+          doc.setFontSize(10);
+          doc.setTextColor(0, 0, 0);
+          doc.text('OBSERVAÇÕES:', 14, finalY);
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(9);
+          doc.text(budget.clientNotes, 14, finalY + 5, { maxWidth: 180 });
+        }
+      } else {
+        doc.setFontSize(12);
+        doc.text('DETALHES DO ORÇAMENTO:', 14, currentY);
+        doc.setFontSize(10);
+        doc.text(`Material: ${filament.brand} ${filament.type}`, 14, currentY + 10);
+        doc.text(`Preço Final: R$ ${results.finalPrice.toFixed(2)}`, 14, currentY + 20);
       }
+
+      doc.save(`Orcamento_${budget.clientName || 'Cliente'}_${budget.fileName || 'Projeto'}.pdf`);
+    } catch (error) {
+      console.error("Erro crítico ao gerar PDF:", error);
+      alert("Não foi possível gerar o PDF. Verifique se o seu navegador permite downloads.");
     }
-
-    // --- Budget Table ---
-    autoTable(doc, {
-      startY: currentY,
-      head: [['Item', 'Valor']],
-      body: [
-        ['Material', `${filament.brand} ${filament.type}`],
-        ['Peso Estimado', `${budget.weight}g`],
-        ['Tempo Estimado', `${budget.time}h`],
-        ['Custo de Material', `R$ ${results.materialCost.toFixed(2)}`],
-        ['Custo de Energia', `R$ ${results.energyCost.toFixed(2)}`],
-        ['Mão de Obra', `R$ ${budget.laborCost.toFixed(2)}`],
-        ['Embalagem', `R$ ${budget.packagingCost.toFixed(2)}`],
-        ['Frete / Envio', `R$ ${budget.shippingCost.toFixed(2)}`],
-        ['Taxas de Plataforma', `R$ ${results.feeAmount.toFixed(2)}`],
-        ['PREÇO FINAL', `R$ ${results.finalPrice.toFixed(2)}`],
-      ],
-      theme: 'striped',
-      headStyles: { fillColor: [37, 99, 235] },
-      styles: { fontSize: 9, cellPadding: 3 },
-      columnStyles: {
-        1: { halign: 'right', fontStyle: 'bold' }
-      }
-    });
-
-    if (budget.clientNotes) {
-      const finalY = (doc as any).lastAutoTable.cursor.y + 10;
-      doc.setFontSize(10);
-      doc.setTextColor(0, 0, 0);
-      doc.text('OBSERVAÇÕES:', 14, finalY);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      doc.text(budget.clientNotes, 14, finalY + 5, { maxWidth: 180 });
-    }
-
-    doc.save(`Orcamento_${budget.clientName || 'Cliente'}_${budget.fileName || 'Projeto'}.pdf`);
   };
 
   const sendWhatsApp = () => {
@@ -1070,31 +1136,113 @@ _Derretendo Ideias 3D_`;
                   </div>
                 </div>
 
-                <InputGroup 
-                  label="Peso da Impressão" 
-                  icon={Weight}
-                  tooltip="Peso final da peça em gramas (incluindo suportes)."
-                >
-                  <Input 
-                    type="number" 
-                    value={budget.weight} 
-                    onChange={(v) => setBudget(p => ({ ...p, weight: parseFloat(v) || 0 }))} 
-                    suffix="gramas"
-                  />
-                </InputGroup>
+                <div className="md:col-span-2 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] uppercase font-black text-gray-500 flex items-center gap-2">
+                      <Box size={12} />
+                      Peças a serem fabricadas
+                    </p>
+                    <button 
+                      onClick={() => setBudget(p => ({ 
+                        ...p, 
+                        items: [...p.items, { id: Date.now().toString(), name: `Peça ${p.items.length + 1}`, weight: 0, time: 0 }] 
+                      }))}
+                      className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-lg font-bold flex items-center gap-1 transition-colors"
+                    >
+                      <Plus size={12} />
+                      Adicionar Peça
+                    </button>
+                  </div>
 
-                <InputGroup 
-                  label="Tempo de Impressão" 
-                  icon={Clock}
-                  tooltip="Tempo total que a impressora levará para concluir o trabalho."
-                >
-                  <Input 
-                    type="number" 
-                    value={budget.time} 
-                    onChange={(v) => setBudget(p => ({ ...p, time: parseFloat(v) || 0 }))} 
-                    suffix="horas"
-                  />
-                </InputGroup>
+                  <div className="space-y-3">
+                    {budget.items.map((item, index) => (
+                      <div key={item.id} className="bg-[#1e2638] border border-[#2d374d] rounded-xl p-4 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black text-blue-500 uppercase">Item #{index + 1}</span>
+                          {budget.items.length > 1 && (
+                            <button 
+                              onClick={() => setBudget(p => ({ ...p, items: p.items.filter(i => i.id !== item.id) }))}
+                              className="text-gray-500 hover:text-red-500 transition-colors"
+                            >
+                              <Minus size={14} />
+                            </button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-gray-500 uppercase font-bold">Nome da Peça</label>
+                            <input 
+                              type="text"
+                              value={item.name}
+                              onChange={(e) => {
+                                const newItems = [...budget.items];
+                                newItems[index].name = e.target.value;
+                                setBudget(p => ({ ...p, items: newItems }));
+                              }}
+                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
+                              placeholder="ex: Suporte A"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-gray-500 uppercase font-bold">Peso (g)</label>
+                            <input 
+                              type="number"
+                              value={item.weight}
+                              onChange={(e) => {
+                                const newItems = [...budget.items];
+                                newItems[index].weight = parseFloat(e.target.value) || 0;
+                                setBudget(p => ({ ...p, items: newItems }));
+                              }}
+                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-gray-500 uppercase font-bold">Tempo (h)</label>
+                            <input 
+                              type="number"
+                              value={item.time}
+                              onChange={(e) => {
+                                const newItems = [...budget.items];
+                                newItems[index].time = parseFloat(e.target.value) || 0;
+                                setBudget(p => ({ ...p, items: newItems }));
+                              }}
+                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-gray-500 uppercase font-bold">Valor (R$)</label>
+                            <input 
+                              type="number"
+                              value={item.price}
+                              onChange={(e) => {
+                                const newItems = [...budget.items];
+                                newItems[index].price = parseFloat(e.target.value) || 0;
+                                setBudget(p => ({ ...p, items: newItems }));
+                              }}
+                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4 bg-blue-600/10 border border-blue-500/20 rounded-xl p-3">
+                    <div className="text-center">
+                      <p className="text-[8px] text-blue-400 uppercase font-bold">Peso Total</p>
+                      <p className="text-sm font-black text-white">{results.totalWeight}g</p>
+                    </div>
+                    <div className="text-center border-l border-blue-500/20">
+                      <p className="text-[8px] text-blue-400 uppercase font-bold">Tempo Total</p>
+                      <p className="text-sm font-black text-white">{results.totalTime}h</p>
+                    </div>
+                    <div className="text-center border-l border-blue-500/20">
+                      <p className="text-[8px] text-blue-400 uppercase font-bold">Valor Total</p>
+                      <p className="text-sm font-black text-white">R$ {results.totalItemsPrice.toFixed(2)}</p>
+                    </div>
+                  </div>
+                </div>
 
                 <InputGroup 
                   label="Preço da Energia (kWh)" 
@@ -1210,7 +1358,19 @@ _Derretendo Ideias 3D_`;
               className="w-full h-1.5 bg-[#2d374d] rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
 
-            <div className="grid grid-cols-3 gap-2 pt-2">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-2 pt-2">
+              <div className="text-center p-2 rounded-xl bg-[#1e2638]">
+                <p className="text-[8px] uppercase font-bold text-gray-500">Peso Total</p>
+                <p className="text-xs font-bold">{results.totalWeight}g</p>
+              </div>
+              <div className="text-center p-2 rounded-xl bg-[#1e2638]">
+                <p className="text-[8px] uppercase font-bold text-gray-500">Tempo Total</p>
+                <p className="text-xs font-bold">{results.totalTime}h</p>
+              </div>
+              <div className="text-center p-2 rounded-xl bg-[#1e2638]">
+                <p className="text-[8px] uppercase font-bold text-gray-500">Valor Manual</p>
+                <p className="text-xs font-bold">R$ {results.totalItemsPrice.toFixed(2)}</p>
+              </div>
               <div className="text-center p-2 rounded-xl bg-[#1e2638]">
                 <p className="text-[8px] uppercase font-bold text-gray-500">Material</p>
                 <p className="text-xs font-bold">R$ {results.materialCost.toFixed(2)}</p>
