@@ -521,7 +521,7 @@ export default function Calculator() {
   };
 
   const deleteBudget = (id: string) => {
-    if (window.confirm('Tem certeza que deseja excluir este orçamento?')) {
+    if (confirm('Tem certeza que deseja excluir este orçamento?')) {
       const updated = savedBudgets.filter(b => b.id !== id);
       setSavedBudgets(updated);
       localStorage.setItem('printcalc_budgets', JSON.stringify(updated));
@@ -1365,6 +1365,34 @@ _Derretendo Ideias 3D_`;
                           </p>
                         </div>
                       ))}
+                    </div>
+                  </div>
+
+                  {/* Model Repositories */}
+                  <div className="space-y-3">
+                    <p className="text-[10px] uppercase font-black text-gray-500 flex items-center gap-2">
+                      <Box size={12} />
+                      Repositórios de Modelos 3D
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <a 
+                        href="https://makerworld.com" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 p-3 rounded-xl transition-all flex items-center justify-between group"
+                      >
+                        <span className="text-xs font-bold">Maker World</span>
+                        <ExternalLink size={12} className="text-gray-600 group-hover:text-blue-500" />
+                      </a>
+                      <a 
+                        href="https://www.crealitycloud.com" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 p-3 rounded-xl transition-all flex items-center justify-between group"
+                      >
+                        <span className="text-xs font-bold">Creality Cloud</span>
+                        <ExternalLink size={12} className="text-gray-600 group-hover:text-blue-500" />
+                      </a>
                     </div>
                   </div>
 
