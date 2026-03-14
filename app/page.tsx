@@ -34,6 +34,7 @@ import {
   RotateCcw,
   User,
   Share2,
+  Truck,
   LogOut,
   LogIn,
   UserPlus,
@@ -243,19 +244,60 @@ const PRINTER_BRANDS = Object.keys(PRINTER_MODELS);
 const FILAMENT_BRANDS = [
   "Bambu Lab", "eSun", "SUNLU", "Overture", "Hatchbox", "Polymaker", "ColorFabb", "Prusament",
   "3D Fila", "Voolt3D", "Cliever", "Filacorp", "UP3D", "GTMax3D", "3DLab", "National 3D", "Tríade3D",
-  "FormFutura", "Fiberlogy", "Spectrum Filaments", "Fillamentum", "Proto-Pasta", "MatterHackers", 
-  "3DXTech", "Atomic Filament", "AzureFilm", "Devil Design", "PolyFlow", "Genérico", "Outra"
+  "Genérico", "Outra"
 ];
 
 // Default densities (g/cm3)
 const DEFAULT_DENSITIES: Record<string, number> = {
   "PLA": 1.24,
+  "PLA+": 1.24,
+  "PLA Silk": 1.24,
+  "PLA Matte": 1.24,
+  "PLA High Speed": 1.24,
+  "PLA Tough": 1.24,
   "PETG": 1.27,
+  "PETG+": 1.27,
   "ABS": 1.04,
+  "ABS+": 1.04,
   "ASA": 1.07,
   "TPU": 1.21,
+  "TPU 95A": 1.21,
+  "TPU 85A": 1.21,
   "Nylon": 1.08,
+  "Nylon (PA6)": 1.08,
+  "Nylon (PA12)": 1.01,
   "PC": 1.20,
+  "HIPS": 1.07,
+  "PVA": 1.19,
+  "Wood": 1.15,
+  "Metal Fill": 2.50,
+  "Carbon Fiber": 1.30,
+};
+
+const DEFAULT_PRINTER_DATA: Record<string, { power: number, speed: number }> = {
+  "X1 Carbon": { power: 350, speed: 500 },
+  "X1": { power: 350, speed: 500 },
+  "P1P": { power: 350, speed: 500 },
+  "P1S": { power: 350, speed: 500 },
+  "A1": { power: 150, speed: 500 },
+  "A1 Mini": { power: 150, speed: 500 },
+  "Ender 3": { power: 150, speed: 60 },
+  "Ender 3 V2": { power: 150, speed: 60 },
+  "Ender 3 V3": { power: 350, speed: 600 },
+  "K1": { power: 350, speed: 600 },
+  "K1 Max": { power: 350, speed: 600 },
+  "MK3S+": { power: 200, speed: 100 },
+  "MK4": { power: 200, speed: 200 },
+  "Mini+": { power: 150, speed: 100 },
+  "XL": { power: 350, speed: 200 },
+  "Neptune 4": { power: 350, speed: 500 },
+  "Neptune 4 Pro": { power: 350, speed: 500 },
+  "Neptune 4 Max": { power: 400, speed: 500 },
+  "Sidewinder X2": { power: 350, speed: 150 },
+  "Sidewinder X3": { power: 350, speed: 500 },
+  "Kobra 2": { power: 350, speed: 300 },
+  "Kobra 2 Pro": { power: 350, speed: 500 },
+  "Adventurer 4": { power: 250, speed: 150 },
 };
 
 // --- Components ---
@@ -304,7 +346,7 @@ const Input = ({ type = "text", value, onChange, placeholder, suffix }: { type?:
   <div className="relative">
     <input 
       type={type}
-      value={value}
+      value={value ?? ''}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       className="w-full bg-[#1e2638] border border-[#2d374d] text-white rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500 transition-colors hover:bg-[#1e2638] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -418,15 +460,18 @@ export default function Calculator() {
     const totalMfgCost = materialCost + energyCost + wearCost + failRiskCost + budget.laborCost + budget.packagingCost;
     
     const markupAmount = totalMfgCost * (budget.markup / 100);
-    const subtotal = totalMfgCost + markupAmount + budget.shippingCost;
+    const calculatedBase = totalMfgCost + markupAmount;
     
-    const feeAmount = subtotal * (budget.platformFee / 100);
-    // If manual prices are set, we might want to use them, but for now let's just keep the automatic calculation
-    // and maybe show the manual total as a reference or use it if it's > 0.
-    // However, usually users want the manual price to be the final price.
-    // Let's make it so if totalItemsPrice > 0, we use it as the subtotal (before shipping and fees)
-    const basePrice = totalItemsPrice > 0 ? totalItemsPrice : subtotal;
-    const finalPrice = basePrice + feeAmount;
+    // If manual prices are set, we use them as the base price.
+    // Otherwise, we use the calculated cost + markup.
+    const basePrice = totalItemsPrice > 0 ? totalItemsPrice : calculatedBase;
+    
+    // Shipping is added after the base price.
+    const subtotalWithShipping = basePrice + budget.shippingCost;
+    
+    // Platform fee is calculated on the subtotal including shipping.
+    const feeAmount = subtotalWithShipping * (budget.platformFee / 100);
+    const finalPrice = subtotalWithShipping + feeAmount;
 
     return {
       totalWeight,
@@ -436,9 +481,11 @@ export default function Calculator() {
       energyCost,
       wearCost,
       failRiskCost,
+      totalMfgCost,
+      markupAmount,
+      basePrice,
       feeAmount,
-      finalPrice,
-      totalMfgCost
+      finalPrice
     };
   }, [budget, filament, printer]);
 
@@ -508,6 +555,57 @@ export default function Calculator() {
     } else if (file.name.toLowerCase().endsWith('.stl')) {
       const url = URL.createObjectURL(file);
       setUploadedFile({ url, type: 'stl' });
+    } else if (file.name.toLowerCase().endsWith('.gcode')) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        
+        // Simple G-code parsing for weight and time
+        // Common patterns:
+        // ; filament used [g] = 12.34
+        // ; estimated printing time (normal mode) = 1h 23m 45s
+        
+        let extractedWeight = 0;
+        let extractedTime = 0;
+
+        // Weight extraction
+        const weightMatch = content.match(/filament used \[g\]\s*=\s*([\d.]+)/i) || 
+                           content.match(/filament used\s*:\s*([\d.]+)\s*g/i);
+        if (weightMatch) extractedWeight = parseFloat(weightMatch[1]);
+
+        // Time extraction (simplified)
+        const timeMatch = content.match(/estimated printing time\s*\(normal mode\)\s*=\s*(.*)/i) ||
+                         content.match(/time\s*:\s*(.*)/i);
+        if (timeMatch) {
+          const timeStr = timeMatch[1];
+          const hMatch = timeStr.match(/(\d+)h/);
+          const mMatch = timeStr.match(/(\d+)m/);
+          const sMatch = timeStr.match(/(\d+)s/);
+          
+          const hours = hMatch ? parseInt(hMatch[1]) : 0;
+          const minutes = mMatch ? parseInt(mMatch[1]) : 0;
+          const seconds = sMatch ? parseInt(sMatch[1]) : 0;
+          
+          extractedTime = hours + (minutes / 60) + (seconds / 3600);
+        }
+
+        if (extractedWeight > 0 || extractedTime > 0) {
+          setBudget(prev => ({
+            ...prev,
+            items: [
+              { 
+                id: Date.now().toString(), 
+                name: file.name.replace('.gcode', ''), 
+                weight: extractedWeight || prev.items[0].weight, 
+                time: extractedTime || prev.items[0].time,
+                price: 0
+              }
+            ]
+          }));
+        }
+      };
+      reader.readAsText(file.slice(0, 100000)); // Read first 100KB for comments
+      setUploadedFile({ url: null, type: 'gcode' });
     } else {
       setUploadedFile({ url: null, type: 'other' });
     }
@@ -749,8 +847,8 @@ export default function Calculator() {
 *Cliente:* ${budget.clientName || 'N/A'}
 ${budget.clientPhone ? `*Contato:* ${budget.clientPhone}\n` : ''}*Projeto:* ${budget.fileName || 'N/A'}
 *Material:* ${filament.brand} ${filament.type}
-*Peso:* ${budget.weight}g
-*Tempo:* ${budget.time}h
+*Peso Total:* ${results.totalWeight}g
+*Tempo Total:* ${results.totalTime}h
 ------------------------------
 *DETALHAMENTO DE CUSTOS:*
 • Material: R$ ${results.materialCost.toFixed(2)}
@@ -861,9 +959,12 @@ _Derretendo Ideias 3D_`;
                     value={filament.type} 
                     onChange={(e) => {
                       const type = e.target.value;
+                      // Find base type for density (e.g., "PLA Silk" -> "PLA")
+                      const baseType = Object.keys(DEFAULT_DENSITIES).find(k => type.includes(k)) || "PLA";
                       setFilament(prev => ({ 
                         ...prev, 
-                        type
+                        type,
+                        density: DEFAULT_DENSITIES[baseType] || prev.density
                       }));
                     }}
                     className="w-full bg-[#1e2638] border border-[#2d374d] text-white rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500 transition-colors"
@@ -988,7 +1089,15 @@ _Derretendo Ideias 3D_`;
                 >
                   <Select 
                     value={printer.model} 
-                    onChange={(v) => setPrinter(p => ({ ...p, model: v }))}
+                    onChange={(v) => {
+                      const data = DEFAULT_PRINTER_DATA[v];
+                      setPrinter(p => ({ 
+                        ...p, 
+                        model: v,
+                        power: data?.power || p.power,
+                        speed: data?.speed || p.speed
+                      }));
+                    }}
                     options={PRINTER_MODELS[printer.brand as keyof typeof PRINTER_MODELS] || []}
                   />
                 </InputGroup>
@@ -1039,14 +1148,20 @@ _Derretendo Ideias 3D_`;
                 <div className="md:col-span-2 space-y-4">
                   <ModelViewer url={uploadedFile.url} type={uploadedFile.type} imageUrl={budget.projectImage} />
                   
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Dados do Cliente */}
+                <div className="space-y-4">
+                  <p className="text-[10px] uppercase font-black text-gray-500 flex items-center gap-2">
+                    <User size={12} />
+                    Dados do Cliente
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <InputGroup 
                       label="Nome do Cliente" 
                       icon={User}
                       tooltip="Nome da pessoa ou empresa que solicitou o orçamento."
                     >
                       <Input 
-                        value={budget.clientName} 
+                        value={budget.clientName || ''} 
                         onChange={(v) => setBudget(p => ({ ...p, clientName: v }))} 
                         placeholder="ex: João Silva"
                       />
@@ -1058,7 +1173,7 @@ _Derretendo Ideias 3D_`;
                       tooltip="Contato do cliente."
                     >
                       <Input 
-                        value={budget.clientPhone} 
+                        value={budget.clientPhone || ''} 
                         onChange={(v) => setBudget(p => ({ ...p, clientPhone: v }))} 
                         placeholder="ex: (11) 99999-9999"
                       />
@@ -1070,14 +1185,45 @@ _Derretendo Ideias 3D_`;
                       tooltip="E-mail para contato."
                     >
                       <Input 
-                        value={budget.clientEmail} 
+                        value={budget.clientEmail || ''} 
                         onChange={(v) => setBudget(p => ({ ...p, clientEmail: v }))} 
                         placeholder="ex: cliente@email.com"
                       />
                     </InputGroup>
+                  </div>
+                </div>
+
+                {/* Dados do Projeto */}
+                <div className="space-y-4">
+                  <p className="text-[10px] uppercase font-black text-gray-500 flex items-center gap-2">
+                    <FileText size={12} />
+                    Dados do Projeto
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <InputGroup 
+                      label="Nome do Projeto" 
+                      icon={FileText}
+                      tooltip="Nome descritivo da peça que será impressa."
+                    >
+                      <Input 
+                        value={budget.fileName || ''} 
+                        onChange={(v) => setBudget(p => ({ ...p, fileName: v }))} 
+                        placeholder="ex: Capacete Homem de Ferro"
+                      />
+                    </InputGroup>
 
                     <InputGroup 
-                      label="Upload de Arquivo (img png)" 
+                      label="Material Selecionado" 
+                      icon={Box}
+                      tooltip="Material configurado no Passo 1."
+                    >
+                      <div className="w-full bg-[#1e2638]/50 border border-[#2d374d] text-gray-400 rounded-xl p-3 text-sm">
+                        {filament.brand} {filament.type}
+                      </div>
+                    </InputGroup>
+
+                    <InputGroup 
+                      label="Upload de Arquivo (STL/G-code)" 
                       icon={Upload}
                       tooltip="Suba o arquivo 3D para extrair dados ou uma imagem para referência visual."
                     >
@@ -1094,46 +1240,48 @@ _Derretendo Ideias 3D_`;
                         </div>
                       </div>
                     </InputGroup>
-                  </div>
 
-                  <div className="grid grid-cols-1 gap-6">
-                    <InputGroup 
-                      label="Observações do Cliente" 
-                      icon={FileText}
-                      tooltip="Notas adicionais sobre o pedido ou cliente."
-                    >
-                      <textarea 
-                        value={budget.clientNotes}
-                        onChange={(e) => setBudget(p => ({ ...p, clientNotes: e.target.value }))}
-                        placeholder="ex: Cliente solicitou acabamento liso..."
-                        className="w-full bg-[#1e2638] border border-[#2d374d] text-white rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500 transition-colors min-h-[80px]"
-                      />
-                    </InputGroup>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <InputGroup 
-                      label="Nome do Projeto" 
-                      icon={FileText}
-                      tooltip="Nome descritivo da peça que será impressa."
-                    >
-                      <Input 
-                        value={budget.fileName} 
-                        onChange={(v) => setBudget(p => ({ ...p, fileName: v }))} 
-                        placeholder="ex: Capacete Homem de Ferro"
-                      />
-                    </InputGroup>
-
-                    <InputGroup 
-                      label="Material Selecionado" 
-                      icon={Box}
-                      tooltip="Material configurado no Passo 1."
-                    >
-                      <div className="w-full bg-[#1e2638]/50 border border-[#2d374d] text-gray-400 rounded-xl p-3 text-sm">
-                        {filament.brand} {filament.type}
+                    <div className="space-y-3">
+                      <p className="text-[10px] uppercase font-black text-gray-500 flex items-center gap-2">
+                        <ExternalLink size={12} />
+                        Repositórios de Modelos 3D
+                      </p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <a 
+                          href="https://makerworld.com" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-center gap-2 bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 p-3 rounded-xl transition-all text-xs font-bold"
+                        >
+                          Maker World
+                          <ExternalLink size={12} className="text-blue-500" />
+                        </a>
+                        <a 
+                          href="https://www.crealitycloud.com" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-center gap-2 bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 p-3 rounded-xl transition-all text-xs font-bold"
+                        >
+                          Creality Cloud
+                          <ExternalLink size={12} className="text-blue-500" />
+                        </a>
                       </div>
-                    </InputGroup>
+                    </div>
                   </div>
+
+                  <InputGroup 
+                    label="Observações do Cliente" 
+                    icon={FileText}
+                    tooltip="Notas adicionais sobre o pedido ou cliente."
+                  >
+                    <textarea 
+                      value={budget.clientNotes || ''}
+                      onChange={(e) => setBudget(p => ({ ...p, clientNotes: e.target.value }))}
+                      placeholder="ex: Cliente solicitou acabamento liso..."
+                      className="w-full bg-[#1e2638] border border-[#2d374d] text-white rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500 transition-colors min-h-[80px]"
+                    />
+                  </InputGroup>
+                </div>
                 </div>
 
                 <div className="md:col-span-2 space-y-4">
@@ -1145,7 +1293,7 @@ _Derretendo Ideias 3D_`;
                     <button 
                       onClick={() => setBudget(p => ({ 
                         ...p, 
-                        items: [...p.items, { id: Date.now().toString(), name: `Peça ${p.items.length + 1}`, weight: 0, time: 0 }] 
+                        items: [...p.items, { id: Date.now().toString(), name: `Peça ${p.items.length + 1}`, weight: 0, time: 0, price: 0 }] 
                       }))}
                       className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-lg font-bold flex items-center gap-1 transition-colors"
                     >
@@ -1168,12 +1316,12 @@ _Derretendo Ideias 3D_`;
                             </button>
                           )}
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                           <div className="space-y-1">
                             <label className="text-[10px] text-gray-500 uppercase font-bold">Nome da Peça</label>
                             <input 
                               type="text"
-                              value={item.name}
+                              value={item.name || ''}
                               onChange={(e) => {
                                 const newItems = [...budget.items];
                                 newItems[index].name = e.target.value;
@@ -1187,7 +1335,7 @@ _Derretendo Ideias 3D_`;
                             <label className="text-[10px] text-gray-500 uppercase font-bold">Peso (g)</label>
                             <input 
                               type="number"
-                              value={item.weight}
+                              value={item.weight ?? 0}
                               onChange={(e) => {
                                 const newItems = [...budget.items];
                                 newItems[index].weight = parseFloat(e.target.value) || 0;
@@ -1200,7 +1348,7 @@ _Derretendo Ideias 3D_`;
                             <label className="text-[10px] text-gray-500 uppercase font-bold">Tempo (h)</label>
                             <input 
                               type="number"
-                              value={item.time}
+                              value={item.time ?? 0}
                               onChange={(e) => {
                                 const newItems = [...budget.items];
                                 newItems[index].time = parseFloat(e.target.value) || 0;
@@ -1213,7 +1361,7 @@ _Derretendo Ideias 3D_`;
                             <label className="text-[10px] text-gray-500 uppercase font-bold">Valor (R$)</label>
                             <input 
                               type="number"
-                              value={item.price}
+                              value={item.price ?? 0}
                               onChange={(e) => {
                                 const newItems = [...budget.items];
                                 newItems[index].price = parseFloat(e.target.value) || 0;
@@ -1244,83 +1392,138 @@ _Derretendo Ideias 3D_`;
                   </div>
                 </div>
 
-                <InputGroup 
-                  label="Preço da Energia (kWh)" 
-                  icon={DollarSign}
-                  tooltip="Valor do kWh cobrado pela sua concessionária de energia."
-                >
-                  <Input 
-                    type="number" 
-                    value={budget.energyPrice} 
-                    onChange={(v) => setBudget(p => ({ ...p, energyPrice: parseFloat(v) || 0 }))} 
-                    suffix="R$"
-                  />
-                </InputGroup>
+                {/* Custos Adicionais */}
+                <div className="md:col-span-2 space-y-6 pt-4 border-t border-[#2d374d]/50">
+                  <p className="text-[10px] uppercase font-black text-gray-400 flex items-center gap-2">
+                    <DollarSign size={12} className="text-blue-500" />
+                    Custos Adicionais e Configurações
+                  </p>
+                  
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Grupo 1: Custos de Produção */}
+                    <div className="space-y-4 bg-[#1e2638]/30 p-4 rounded-2xl border border-[#2d374d]/30">
+                      <p className="text-[9px] uppercase font-bold text-blue-400/80 tracking-widest flex items-center gap-2">
+                        <Box size={10} />
+                        Custos de Operação e Logística
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <InputGroup 
+                          label="Energia (kWh)" 
+                          icon={Zap}
+                          tooltip="Valor do kWh cobrado pela sua concessionária."
+                        >
+                          <Input 
+                            type="number" 
+                            value={budget.energyPrice} 
+                            onChange={(v) => setBudget(p => ({ ...p, energyPrice: parseFloat(v) || 0 }))} 
+                            suffix="R$"
+                          />
+                        </InputGroup>
 
-                <InputGroup 
-                  label="Custo de Mão de Obra" 
-                  icon={DollarSign}
-                  tooltip="Valor fixo que você cobra pelo seu tempo de preparação e pós-processamento."
-                >
-                  <Input 
-                    type="number" 
-                    value={budget.laborCost} 
-                    onChange={(v) => setBudget(p => ({ ...p, laborCost: parseFloat(v) || 0 }))} 
-                    suffix="R$"
-                  />
-                </InputGroup>
+                        <InputGroup 
+                          label="Mão de Obra" 
+                          icon={User}
+                          tooltip="Valor fixo pelo seu tempo de trabalho."
+                        >
+                          <Input 
+                            type="number" 
+                            value={budget.laborCost} 
+                            onChange={(v) => setBudget(p => ({ ...p, laborCost: parseFloat(v) || 0 }))} 
+                            suffix="R$"
+                          />
+                        </InputGroup>
 
-                <InputGroup 
-                  label="Custo de Embalagem" 
-                  icon={Box}
-                  tooltip="Gastos com caixa, plástico bolha, fita e etiquetas."
-                >
-                  <Input 
-                    type="number" 
-                    value={budget.packagingCost} 
-                    onChange={(v) => setBudget(p => ({ ...p, packagingCost: parseFloat(v) || 0 }))} 
-                    suffix="R$"
-                  />
-                </InputGroup>
+                        <InputGroup 
+                          label="Embalagem" 
+                          icon={Box}
+                          tooltip="Gastos com caixa, fita e etiquetas."
+                        >
+                          <Input 
+                            type="number" 
+                            value={budget.packagingCost} 
+                            onChange={(v) => setBudget(p => ({ ...p, packagingCost: parseFloat(v) || 0 }))} 
+                            suffix="R$"
+                          />
+                        </InputGroup>
 
-                <InputGroup 
-                  label="Frete / Envio" 
-                  icon={Zap}
-                  tooltip="Valor do frete se for cobrado separadamente no orçamento."
-                >
-                  <Input 
-                    type="number" 
-                    value={budget.shippingCost} 
-                    onChange={(v) => setBudget(p => ({ ...p, shippingCost: parseFloat(v) || 0 }))} 
-                    suffix="R$"
-                  />
-                </InputGroup>
+                        <InputGroup 
+                          label="Frete / Envio" 
+                          icon={Truck}
+                          tooltip="Valor do frete se cobrado separadamente."
+                        >
+                          <Input 
+                            type="number" 
+                            value={budget.shippingCost} 
+                            onChange={(v) => setBudget(p => ({ ...p, shippingCost: parseFloat(v) || 0 }))} 
+                            suffix="R$"
+                          />
+                        </InputGroup>
+                      </div>
+                    </div>
 
-                <InputGroup 
-                  label="Taxa Plataforma (%)" 
-                  icon={DollarSign}
-                  tooltip="Porcentagem cobrada por marketplaces (ex: Mercado Livre, Shopee)."
-                >
-                  <Input 
-                    type="number" 
-                    value={budget.platformFee} 
-                    onChange={(v) => setBudget(p => ({ ...p, platformFee: parseFloat(v) || 0 }))} 
-                    suffix="%"
-                  />
-                </InputGroup>
+                    {/* Grupo 2: Taxas e Margens */}
+                    <div className="space-y-4 bg-[#1e2638]/30 p-4 rounded-2xl border border-[#2d374d]/30">
+                      <p className="text-[9px] uppercase font-bold text-emerald-400/80 tracking-widest flex items-center gap-2">
+                        <DollarSign size={10} />
+                        Taxas, Riscos e Lucro
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <InputGroup 
+                          label="Taxa Plataforma" 
+                          icon={DollarSign}
+                          tooltip="Porcentagem cobrada por marketplaces."
+                        >
+                          <Input 
+                            type="number" 
+                            value={budget.platformFee} 
+                            onChange={(v) => setBudget(p => ({ ...p, platformFee: parseFloat(v) || 0 }))} 
+                            suffix="%"
+                          />
+                        </InputGroup>
 
-                <InputGroup 
-                  label="Risco de Falha" 
-                  icon={Info}
-                  tooltip="Margem de segurança para cobrir possíveis erros de impressão ou perda de material."
-                >
-                  <Input 
-                    type="number" 
-                    value={budget.failRisk} 
-                    onChange={(v) => setBudget(p => ({ ...p, failRisk: parseFloat(v) || 0 }))} 
-                    suffix="%"
-                  />
-                </InputGroup>
+                        <InputGroup 
+                          label="Risco de Falha" 
+                          icon={Info}
+                          tooltip="Margem para cobrir erros de impressão."
+                        >
+                          <Input 
+                            type="number" 
+                            value={budget.failRisk} 
+                            onChange={(v) => setBudget(p => ({ ...p, failRisk: parseFloat(v) || 0 }))} 
+                            suffix="%"
+                          />
+                        </InputGroup>
+
+                        <div className="col-span-full space-y-3 pt-2">
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              <p className="text-[10px] uppercase font-black text-gray-500">Markup (Margem de Lucro)</p>
+                              <span className="bg-emerald-500/10 text-emerald-500 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                {budget.markup}%
+                              </span>
+                            </div>
+                            <div className="w-20">
+                              <Input 
+                                type="number"
+                                value={budget.markup}
+                                onChange={(v) => setBudget(p => ({ ...p, markup: parseInt(v) || 0 }))}
+                                suffix="%"
+                              />
+                            </div>
+                          </div>
+                          <input 
+                            type="range" 
+                            min="0" 
+                            max="500" 
+                            value={budget.markup} 
+                            onChange={(e) => setBudget(p => ({ ...p, markup: parseInt(e.target.value) }))}
+                            className="w-full h-1.5 bg-[#2d374d] rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </motion.div>
           )}
@@ -1328,7 +1531,7 @@ _Derretendo Ideias 3D_`;
 
         {/* Results Section */}
         <section className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Card className="flex flex-col justify-center border-l-4 border-l-blue-500 hover:bg-[#161c2d] transition-none">
               <p className="text-[10px] uppercase font-black text-gray-500">Custo Total de Fab.</p>
               <p className="text-2xl font-black text-blue-400 font-display">R$ {results.totalMfgCost.toFixed(2)}</p>
@@ -1339,26 +1542,8 @@ _Derretendo Ideias 3D_`;
             </Card>
           </div>
 
-          <Card className="space-y-6">
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <p className="text-[10px] uppercase font-black text-gray-500">Markup (Margem)</p>
-                <span className="bg-blue-500/10 text-blue-500 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  {budget.markup}%
-                </span>
-              </div>
-            </div>
-            
-            <input 
-              type="range" 
-              min="0" 
-              max="500" 
-              value={budget.markup} 
-              onChange={(e) => setBudget(p => ({ ...p, markup: parseInt(e.target.value) }))}
-              className="w-full h-1.5 bg-[#2d374d] rounded-lg appearance-none cursor-pointer accent-blue-500"
-            />
-
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-2 pt-2">
+          <Card className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
               <div className="text-center p-2 rounded-xl bg-[#1e2638]">
                 <p className="text-[8px] uppercase font-bold text-gray-500">Peso Total</p>
                 <p className="text-xs font-bold">{results.totalWeight}g</p>
@@ -1434,52 +1619,6 @@ _Derretendo Ideias 3D_`;
                   <Save size={20} />
                   {budget.id ? 'Atualizar Orçamento' : 'Salvar Orçamento'}
                 </button>
-
-                {/* Saved Budgets Section */}
-                {savedBudgets.length > 0 && (
-                  <Card className="bg-[#1e2638]/30">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        <Clock size={16} className="text-blue-500" />
-                        <h3 className="text-xs font-bold uppercase tracking-wider">Orçamentos Salvos</h3>
-                      </div>
-                      <span className="text-[10px] font-bold text-gray-500 uppercase">{savedBudgets.length} itens</span>
-                    </div>
-                    <div className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
-                      {savedBudgets.map((item) => (
-                        <div key={item.id} className="bg-[#1e2638] p-3 rounded-xl border border-[#2d374d] flex items-center justify-between group hover:border-blue-500/50 transition-all">
-                          <div className="flex-1 cursor-pointer" onClick={() => loadBudget(item)}>
-                            <p className="text-xs font-bold truncate">{item.clientName || 'Sem Cliente'} - {item.fileName}</p>
-                            <div className="flex items-center gap-2 mt-1">
-                              <p className="text-[9px] text-gray-500 uppercase font-bold">
-                                {new Date(item.updatedAt).toLocaleDateString()} • R$ {item.results?.finalPrice?.toFixed(2) || '0.00'}
-                              </p>
-                              {item.clientPhone && (
-                                <span className="text-[9px] text-green-500 font-bold bg-green-500/10 px-1.5 py-0.5 rounded">WhatsApp</span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <button 
-                              onClick={() => loadBudget(item)}
-                              className="p-2 text-gray-600 hover:text-blue-500 transition-colors"
-                              title="Editar Orçamento"
-                            >
-                              <Edit2 size={14} />
-                            </button>
-                            <button 
-                              onClick={() => deleteBudget(item.id)}
-                              className="p-2 text-gray-600 hover:text-red-500 transition-colors"
-                              title="Excluir Orçamento"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </Card>
-                )}
                 
                 <div className="space-y-6">
                   {/* Download Links */}
@@ -1560,9 +1699,55 @@ _Derretendo Ideias 3D_`;
                     Sincronize tempos e gastos reais diretamente do seu fatiador ou impressora.
                   </p>
                 </div>
-            </div>
+              </div>
           )}
         </div>
+
+        {/* Saved Budgets Section - Visible in all steps */}
+        {savedBudgets.length > 0 && (
+          <Card className="bg-[#1e2638]/30 mt-8">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <RotateCcw size={16} className="text-blue-500" />
+                <h3 className="text-xs font-bold uppercase tracking-wider">Histórico de Orçamentos</h3>
+              </div>
+              <span className="text-[10px] font-bold text-gray-500 uppercase">{savedBudgets.length} itens</span>
+            </div>
+            <div className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
+              {savedBudgets.map((item) => (
+                <div key={item.id} className="bg-[#1e2638] p-3 rounded-xl border border-[#2d374d] flex items-center justify-between group hover:border-blue-500/50 transition-all">
+                  <div className="flex-1 cursor-pointer" onClick={() => loadBudget(item)}>
+                    <p className="text-xs font-bold truncate">{item.clientName || 'Sem Cliente'} - {item.fileName}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <p className="text-[9px] text-gray-500 uppercase font-bold">
+                        {new Date(item.updatedAt).toLocaleDateString()} • R$ {item.results?.finalPrice?.toFixed(2) || '0.00'}
+                      </p>
+                      {item.clientPhone && (
+                        <span className="text-[9px] text-green-500 font-bold bg-green-500/10 px-1.5 py-0.5 rounded">WhatsApp</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button 
+                      onClick={() => loadBudget(item)}
+                      className="p-2 text-gray-600 hover:text-blue-500 transition-colors"
+                      title="Editar Orçamento"
+                    >
+                      <Edit2 size={14} />
+                    </button>
+                    <button 
+                      onClick={() => deleteBudget(item.id)}
+                      className="p-2 text-gray-600 hover:text-red-500 transition-colors"
+                      title="Excluir Orçamento"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
 
         <footer className="text-center pt-8 space-y-2">
           <p className="text-[10px] text-gray-600 font-bold uppercase tracking-widest">
