@@ -31,6 +31,7 @@ import {
   ExternalLink,
   Download,
   Trash2,
+  History,
   Save,
   RotateCcw,
   User,
@@ -252,6 +253,15 @@ const PRINTER_MODELS: Record<string, string[]> = {
   "Ultimaker": ["S3", "S5", "S7", "2+ Connect"]
 };
 
+const BAMBU_PRESETS = [
+  { name: "0.08mm Extra Fine", layerHeight: 0.08, wallLoops: 3, topLayers: 6, bottomLayers: 5, infill: 15 },
+  { name: "0.12mm Fine", layerHeight: 0.12, wallLoops: 3, topLayers: 5, bottomLayers: 4, infill: 15 },
+  { name: "0.16mm Optimal", layerHeight: 0.16, wallLoops: 2, topLayers: 4, bottomLayers: 3, infill: 15 },
+  { name: "0.20mm Standard", layerHeight: 0.20, wallLoops: 2, topLayers: 3, bottomLayers: 3, infill: 15 },
+  { name: "0.24mm Draft", layerHeight: 0.24, wallLoops: 2, topLayers: 3, bottomLayers: 3, infill: 15 },
+  { name: "0.28mm Extra Rough", layerHeight: 0.28, wallLoops: 2, topLayers: 3, bottomLayers: 3, infill: 15 },
+];
+
 const PRINTER_BRANDS = Object.keys(PRINTER_MODELS);
 
 const FILAMENT_BRANDS = [
@@ -432,7 +442,7 @@ export default function Calculator() {
     fileName: "",
     projectImage: null as string | null,
     items: [
-      { id: Date.now().toString(), name: "Peça 1", weight: 0, time: 0, quantity: 1, price: 0, color: "" }
+      { id: Date.now().toString(), name: "Peça 1", weight: 0, time: 0, quantity: 1, price: 0, color: "", manualUnitPrice: 0, manualTotalPrice: 0 }
     ],
     energyPrice: 0.85, // R$/kWh
     failRisk: 10, // %
@@ -448,20 +458,109 @@ export default function Calculator() {
   const [uploadedFile, setUploadedFile] = useState<{ url: string | null, type: string | null }>({ url: null, type: null });
   const [savedBudgets, setSavedBudgets] = useState<any[]>([]);
 
-  useEffect(() => {
-    const saved = localStorage.getItem('printcalc_budgets');
-    if (saved) {
-      try {
-        setSavedBudgets(JSON.parse(saved));
-      } catch (e) {
-        console.error("Erro ao carregar orçamentos salvos");
-      }
+  // --- Fetch Budgets ---
+  const fetchBudgets = React.useCallback(async () => {
+    if (!user) return;
+    try {
+      const q = query(collection(db, "budgets"), where("userId", "==", user.uid), orderBy("date", "desc"));
+      const querySnapshot = await getDocs(q);
+      const budgets = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setSavedBudgets(budgets);
+    } catch (error) {
+      console.error("Erro ao buscar orçamentos:", error);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
-    localStorage.setItem('printcalc_budgets', JSON.stringify(savedBudgets));
-  }, [savedBudgets]);
+    if (user) {
+      fetchBudgets();
+    } else {
+      setSavedBudgets([]);
+    }
+  }, [user, fetchBudgets]);
+
+  const saveBudgetToFirestore = async () => {
+    if (!user) {
+      alert("Você precisa estar logado para salvar orçamentos.");
+      return;
+    }
+
+    try {
+      const budgetData = {
+        userId: user.uid,
+        name: budget.clientName || budget.fileName || "Orçamento Sem Nome",
+        date: new Date().toISOString(),
+        filamentType: filament.type,
+        printerModel: printer.model,
+        totalWeight: results.totalWeight,
+        totalTime: results.totalTime,
+        totalPrice: results.finalPrice,
+        data: {
+          filament,
+          printer,
+          printSettings,
+          budget,
+          results
+        }
+      };
+
+      await addDoc(collection(db, "budgets"), budgetData);
+      alert("Orçamento salvo com sucesso!");
+      fetchBudgets();
+    } catch (error) {
+      console.error("Erro ao salvar orçamento:", error);
+      alert("Erro ao salvar orçamento.");
+    }
+  };
+
+  const loadBudget = (saved: any) => {
+    const data = saved.data;
+    if (data.filament) setFilament(data.filament);
+    if (data.printer) setPrinter(data.printer);
+    if (data.printSettings) setPrintSettings(data.printSettings);
+    if (data.budget) setBudget(data.budget);
+    setStep(4);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const deleteBudget = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este orçamento?")) return;
+    try {
+      await deleteDoc(doc(db, "budgets", id));
+      fetchBudgets();
+    } catch (error) {
+      console.error("Erro ao excluir orçamento:", error);
+    }
+  };
+
+  const downloadConfig = () => {
+    const data = JSON.stringify(printSettings, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `config_${filament.type}_${printSettings.layerHeight}mm.json`;
+    a.click();
+  };
+
+  const openSlicer = (protocol: string) => {
+    window.location.href = protocol;
+  };
+
+  const saveConfig = () => {
+    localStorage.setItem('print_config_saved', JSON.stringify(printSettings));
+    alert('Configuração salva com sucesso!');
+  };
+
+  const loadConfig = () => {
+    const saved = localStorage.getItem('print_config_saved');
+    if (saved) {
+      setPrintSettings(JSON.parse(saved));
+      alert('Configuração carregada!');
+    } else {
+      alert('Nenhuma configuração salva encontrada.');
+    }
+  };
 
   const results = useMemo(() => {
     // Helper to calculate price for a single item (unit) including markup
@@ -475,8 +574,12 @@ export default function Calculator() {
     };
 
     const itemResults = budget.items.map(item => {
-      const unitPrice = calculateItemUnitPrice(item.weight || 0, item.time || 0);
-      const totalPrice = unitPrice * (item.quantity || 1);
+      const calculatedUnitPrice = calculateItemUnitPrice(item.weight || 0, item.time || 0);
+      const unitPrice = item.manualUnitPrice && item.manualUnitPrice > 0 ? item.manualUnitPrice : calculatedUnitPrice;
+      
+      const calculatedTotalPrice = unitPrice * (item.quantity || 1);
+      const totalPrice = item.manualTotalPrice && item.manualTotalPrice > 0 ? item.manualTotalPrice : calculatedTotalPrice;
+      
       return { ...item, unitPrice, totalPrice };
     });
 
@@ -560,7 +663,7 @@ export default function Calculator() {
       fileName: "",
       projectImage: null,
       items: [
-        { id: Date.now().toString(), name: "Peça 1", weight: 0, time: 0, quantity: 1, price: 0, color: "" }
+        { id: Date.now().toString(), name: "Peça 1", weight: 0, time: 0, quantity: 1, price: 0, color: "", manualUnitPrice: 0, manualTotalPrice: 0 }
       ],
       energyPrice: 0.85,
       failRisk: 10,
@@ -646,7 +749,11 @@ export default function Calculator() {
                 name: file.name.replace('.gcode', ''), 
                 weight: extractedWeight || prev.items[0].weight, 
                 time: extractedTime || prev.items[0].time,
-                price: 0
+                quantity: 1,
+                price: 0,
+                color: "",
+                manualUnitPrice: 0,
+                manualTotalPrice: 0
               }
             ]
           }));
@@ -657,44 +764,6 @@ export default function Calculator() {
     } else {
       setUploadedFile({ url: null, type: 'other' });
     }
-  };
-
-  const saveBudget = () => {
-    const newBudget = {
-      ...budget,
-      id: budget.id || Date.now().toString(),
-      date: new Date().toISOString(),
-      filament,
-      printer,
-      printSettings,
-      finalPrice: results.finalPrice
-    };
-
-    if (budget.id) {
-      setSavedBudgets(prev => prev.map(b => b.id === budget.id ? newBudget : b));
-    } else {
-      setSavedBudgets(prev => [newBudget, ...prev]);
-      setBudget(prev => ({ ...prev, id: newBudget.id }));
-    }
-    alert("Orçamento salvo com sucesso!");
-  };
-
-  const deleteBudget = (id: string) => {
-    if (confirm("Deseja realmente excluir este orçamento?")) {
-      setSavedBudgets(prev => prev.filter(b => b.id !== id));
-      if (budget.id === id) {
-        setBudget(p => ({ ...p, id: null }));
-      }
-    }
-  };
-
-  const loadBudget = (saved: any) => {
-    setBudget(saved);
-    setFilament(saved.filament);
-    setPrinter(saved.printer);
-    setPrintSettings(saved.printSettings);
-    setStep(4);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const generatePDF = async () => {
@@ -1268,14 +1337,62 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
               exit={{ opacity: 0, x: -20 }}
               className="space-y-6"
             >
-              <div className="flex items-center gap-2 text-gray-400">
-                <Settings size={16} />
-                <h2 className="text-sm font-bold uppercase tracking-wider font-display">Configuração de Impressão (Bambu Style)</h2>
+              <div className="flex items-center justify-between gap-2 text-gray-400">
+                <div className="flex items-center gap-2">
+                  <Settings size={16} />
+                  <h2 className="text-sm font-bold uppercase tracking-wider font-display">Configuração de Impressão (Bambu Style)</h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={downloadConfig}
+                    className="p-2 bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 rounded-lg text-gray-400 hover:text-blue-500 transition-all"
+                    title="Baixar Configuração"
+                  >
+                    <Download size={14} />
+                  </button>
+                  <button 
+                    onClick={() => openSlicer('bambulab://')}
+                    className="p-2 bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 rounded-lg text-gray-400 hover:text-blue-500 transition-all"
+                    title="Abrir no Bambu Studio"
+                  >
+                    <ExternalLink size={14} />
+                  </button>
+                  <button 
+                    onClick={loadConfig}
+                    className="p-2 bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 rounded-lg text-gray-400 hover:text-blue-500 transition-all"
+                    title="Abrir Configuração Salva"
+                  >
+                    <FileText size={14} />
+                  </button>
+                  <button 
+                    onClick={saveConfig}
+                    className="p-2 bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 rounded-lg text-gray-400 hover:text-blue-500 transition-all"
+                    title="Salvar Configuração"
+                  >
+                    <Save size={14} />
+                  </button>
+                </div>
               </div>
 
               <div className="bg-[#1e2638]/30 rounded-2xl border border-[#2d374d]/50 overflow-hidden">
-                <div className="flex bg-[#1e2638] border-b border-[#2d374d]">
-                  <div className="px-4 py-2 text-[10px] font-bold text-blue-500 border-b-2 border-blue-500 uppercase tracking-wider">Global</div>
+                <div className="flex bg-[#1e2638] border-b border-[#2d374d] overflow-x-auto no-scrollbar">
+                  <div className="px-4 py-2 text-[10px] font-bold text-blue-500 border-b-2 border-blue-500 uppercase tracking-wider whitespace-nowrap">Global</div>
+                  {BAMBU_PRESETS.map(preset => (
+                    <button 
+                      key={preset.name}
+                      onClick={() => setPrintSettings(p => ({
+                        ...p,
+                        layerHeight: preset.layerHeight,
+                        wallLoops: preset.wallLoops,
+                        topLayers: preset.topLayers,
+                        bottomLayers: preset.bottomLayers,
+                        infillDensity: preset.infill
+                      }))}
+                      className="px-4 py-2 text-[9px] font-bold text-gray-500 hover:text-white uppercase tracking-wider whitespace-nowrap transition-colors"
+                    >
+                      {preset.name}
+                    </button>
+                  ))}
                 </div>
                 
                 <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1515,7 +1632,7 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
                     <button 
                       onClick={() => setBudget(p => ({ 
                         ...p, 
-                        items: [...p.items, { id: Date.now().toString(), name: `Peça ${p.items.length + 1}`, weight: 0, time: 0, price: 0, color: "" }] 
+                        items: [...p.items, { id: Date.now().toString(), name: `Peça ${p.items.length + 1}`, weight: 0, time: 0, quantity: 1, price: 0, color: "", manualUnitPrice: 0, manualTotalPrice: 0 }] 
                       }))}
                       className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-lg font-bold flex items-center gap-1 transition-colors"
                     >
@@ -1524,101 +1641,164 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
                     </button>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {budget.items.map((item, index) => (
-                      <div key={item.id} className="bg-[#1e2638] border border-[#2d374d] rounded-xl p-4 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-black text-blue-500 uppercase">Item #{index + 1}</span>
-                          {budget.items.length > 1 && (
-                            <button 
-                              onClick={() => setBudget(p => ({ ...p, items: p.items.filter(i => i.id !== item.id) }))}
-                              className="text-gray-500 hover:text-red-500 transition-colors"
-                            >
-                              <Minus size={14} />
-                            </button>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-gray-500 uppercase font-bold">Nome da Peça</label>
-                            <input 
-                              type="text"
-                              value={item.name || ''}
-                              onChange={(e) => {
-                                const newItems = [...budget.items];
-                                newItems[index].name = e.target.value;
-                                setBudget(p => ({ ...p, items: newItems }));
-                              }}
-                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
-                              placeholder="ex: Suporte A"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-gray-500 uppercase font-bold">Qtd</label>
-                            <input 
-                              type="number"
-                              value={item.quantity ?? 1}
-                              onChange={(e) => {
-                                const newItems = [...budget.items];
-                                newItems[index].quantity = parseInt(e.target.value) || 1;
-                                setBudget(p => ({ ...p, items: newItems }));
-                              }}
-                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
-                              min="1"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-gray-500 uppercase font-bold">Cor da Peça</label>
-                            <input 
-                              type="text"
-                              value={item.color || ''}
-                              onChange={(e) => {
-                                const newItems = [...budget.items];
-                                newItems[index].color = e.target.value;
-                                setBudget(p => ({ ...p, items: newItems }));
-                              }}
-                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
-                              placeholder="ex: Preto"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-gray-500 uppercase font-bold">Peso (g) Un</label>
-                            <input 
-                              type="number"
-                              value={item.weight === 0 ? '0' : (item.weight || '')}
-                              onChange={(e) => {
-                                const newItems = [...budget.items];
-                                newItems[index].weight = parseFloat(e.target.value) || 0;
-                                setBudget(p => ({ ...p, items: newItems }));
-                              }}
-                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
-                              placeholder="0"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-gray-500 uppercase font-bold">Tempo (h) Un</label>
-                            <input 
-                              type="number"
-                              value={item.time === 0 ? '0' : (item.time || '')}
-                              onChange={(e) => {
-                                const newItems = [...budget.items];
-                                newItems[index].time = parseFloat(e.target.value) || 0;
-                                setBudget(p => ({ ...p, items: newItems }));
-                              }}
-                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
-                              placeholder="0"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-blue-500 uppercase font-bold">Valor Unitário</label>
-                            <div className="w-full bg-[#151b2b] border border-blue-500/30 text-blue-400 rounded-lg px-3 py-2 text-xs font-bold">
-                              R$ {results.itemResults[index].unitPrice.toFixed(2)}
+                      <div key={item.id} className="bg-[#161c2d] border border-[#232d42] rounded-2xl p-4 hover:border-blue-500/30 transition-all group">
+                        <div className="flex flex-col lg:flex-row gap-4">
+                          {/* Info Principal */}
+                          <div className="flex-1 min-w-0 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 bg-blue-500/10 rounded-lg flex items-center justify-center text-[10px] font-black text-blue-500">
+                                  {index + 1}
+                                </div>
+                                <input 
+                                  type="text"
+                                  value={item.name || ''}
+                                  onChange={(e) => {
+                                    const newItems = [...budget.items];
+                                    newItems[index].name = e.target.value;
+                                    setBudget(p => ({ ...p, items: newItems }));
+                                  }}
+                                  className="bg-transparent border-none text-sm font-black text-white focus:outline-none focus:ring-0 p-0 w-full placeholder:text-gray-700"
+                                  placeholder="Nome da Peça..."
+                                />
+                              </div>
+                              {budget.items.length > 1 && (
+                                <button 
+                                  onClick={() => setBudget(p => ({ ...p, items: p.items.filter(i => i.id !== item.id) }))}
+                                  className="p-1.5 text-gray-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[8px] text-gray-600 uppercase font-black tracking-widest">Quantidade</label>
+                                <div className="flex items-center bg-[#1e2638] rounded-xl border border-[#2d374d] px-2">
+                                  <button 
+                                    onClick={() => {
+                                      const newItems = [...budget.items];
+                                      newItems[index].quantity = Math.max(1, (newItems[index].quantity || 1) - 1);
+                                      setBudget(p => ({ ...p, items: newItems }));
+                                    }}
+                                    className="p-1 text-gray-500 hover:text-white"
+                                  >
+                                    <Minus size={12} />
+                                  </button>
+                                  <input 
+                                    type="number"
+                                    value={item.quantity ?? 1}
+                                    onChange={(e) => {
+                                      const newItems = [...budget.items];
+                                      newItems[index].quantity = parseInt(e.target.value) || 1;
+                                      setBudget(p => ({ ...p, items: newItems }));
+                                    }}
+                                    className="w-full bg-transparent border-none text-center text-xs font-bold text-white focus:outline-none focus:ring-0 p-1"
+                                  />
+                                  <button 
+                                    onClick={() => {
+                                      const newItems = [...budget.items];
+                                      newItems[index].quantity = (newItems[index].quantity || 1) + 1;
+                                      setBudget(p => ({ ...p, items: newItems }));
+                                    }}
+                                    className="p-1 text-gray-500 hover:text-white"
+                                  >
+                                    <Plus size={12} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[8px] text-gray-600 uppercase font-black tracking-widest">Peso (g)</label>
+                                <div className="relative">
+                                  <input 
+                                    type="number"
+                                    value={item.weight === 0 ? '' : (item.weight || '')}
+                                    onChange={(e) => {
+                                      const newItems = [...budget.items];
+                                      newItems[index].weight = parseFloat(e.target.value) || 0;
+                                      setBudget(p => ({ ...p, items: newItems }));
+                                    }}
+                                    className="w-full bg-[#1e2638] border border-[#2d374d] text-white rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-blue-500"
+                                    placeholder="0"
+                                  />
+                                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[8px] text-gray-600 font-bold">G</span>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[8px] text-gray-600 uppercase font-black tracking-widest">Tempo (h)</label>
+                                <div className="relative">
+                                  <input 
+                                    type="number"
+                                    value={item.time === 0 ? '' : (item.time || '')}
+                                    onChange={(e) => {
+                                      const newItems = [...budget.items];
+                                      newItems[index].time = parseFloat(e.target.value) || 0;
+                                      setBudget(p => ({ ...p, items: newItems }));
+                                    }}
+                                    className="w-full bg-[#1e2638] border border-[#2d374d] text-white rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-blue-500"
+                                    placeholder="0"
+                                  />
+                                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[8px] text-gray-600 font-bold">H</span>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[8px] text-gray-600 uppercase font-black tracking-widest">Cor</label>
+                                <input 
+                                  type="text"
+                                  value={item.color || ''}
+                                  onChange={(e) => {
+                                    const newItems = [...budget.items];
+                                    newItems[index].color = e.target.value;
+                                    setBudget(p => ({ ...p, items: newItems }));
+                                  }}
+                                  className="w-full bg-[#1e2638] border border-[#2d374d] text-white rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-blue-500"
+                                  placeholder="ex: Preto"
+                                />
+                              </div>
                             </div>
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-blue-500 uppercase font-bold">Valor Total</label>
-                            <div className="w-full bg-[#151b2b] border border-blue-500/30 text-blue-400 rounded-lg px-3 py-2 text-xs font-bold">
-                              R$ {results.itemResults[index].totalPrice.toFixed(2)}
+
+                          {/* Preços Manuais */}
+                          <div className="lg:w-48 flex flex-col gap-2 pt-2 lg:pt-0 lg:border-l lg:border-[#2d374d]/30 lg:pl-4">
+                            <div className="space-y-1">
+                              <label className="text-[8px] text-blue-500 uppercase font-black tracking-widest">Valor Unitário</label>
+                              <div className="relative">
+                                <input 
+                                  type="number"
+                                  value={item.manualUnitPrice || ''}
+                                  onChange={(e) => {
+                                    const newItems = [...budget.items];
+                                    newItems[index].manualUnitPrice = parseFloat(e.target.value) || 0;
+                                    setBudget(p => ({ ...p, items: newItems }));
+                                  }}
+                                  className="w-full bg-blue-500/5 border border-blue-500/20 text-blue-400 rounded-xl px-3 py-2 text-xs font-black focus:outline-none focus:border-blue-500 placeholder:text-blue-500/20"
+                                  placeholder={results.itemResults[index].unitPrice.toFixed(2)}
+                                />
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[8px] text-blue-500/50 font-bold">R$</span>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[8px] text-emerald-500 uppercase font-black tracking-widest">Valor Total</label>
+                              <div className="relative">
+                                <input 
+                                  type="number"
+                                  value={item.manualTotalPrice || ''}
+                                  onChange={(e) => {
+                                    const newItems = [...budget.items];
+                                    newItems[index].manualTotalPrice = parseFloat(e.target.value) || 0;
+                                    setBudget(p => ({ ...p, items: newItems }));
+                                  }}
+                                  className="w-full bg-emerald-500/5 border border-emerald-500/20 text-emerald-400 rounded-xl px-3 py-2 text-xs font-black focus:outline-none focus:border-emerald-500 placeholder:text-emerald-500/20"
+                                  placeholder={results.itemResults[index].totalPrice.toFixed(2)}
+                                />
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[8px] text-emerald-500/50 font-bold">R$</span>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1878,7 +2058,29 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
           </div>
           
           {step === 4 && (
-            <div className="space-y-4">
+            <div className="space-y-6">
+              {/* Slicers Integration */}
+              <div className="space-y-3">
+                <p className="text-[10px] uppercase font-black text-gray-500 flex items-center gap-2">
+                  <Printer size={12} />
+                  Abrir Fatiador Instalado
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {SLICERS.slice(0, 4).map(slicer => (
+                    <button 
+                      key={slicer.name}
+                      onClick={() => openSlicer(slicer.protocol)}
+                      className="bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 p-3 rounded-xl transition-all flex flex-col items-center gap-2 group"
+                    >
+                      <div className="w-8 h-8 bg-blue-500/10 rounded-lg flex items-center justify-center text-blue-500 font-black group-hover:bg-blue-500 group-hover:text-white transition-all">
+                        {slicer.icon}
+                      </div>
+                      <span className="text-[9px] font-bold uppercase text-gray-400 group-hover:text-white">{slicer.name.split(' ')[0]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button 
                   onClick={sendWhatsApp}
@@ -1888,18 +2090,18 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
                   WhatsApp
                 </button>
                 <button 
-                  onClick={saveBudget}
-                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-900/20 transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
-                >
-                  <Save size={20} />
-                  {budget.id ? 'Atualizar Orçamento' : 'Salvar Orçamento'}
-                </button>
-                <button 
                   onClick={sharePDF}
-                  className="w-full bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 text-white font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
+                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-900/20 transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
                 >
                   <Share2 size={20} />
                   Compartilhar PDF
+                </button>
+                <button 
+                  onClick={saveBudgetToFirestore}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 rounded-2xl shadow-lg shadow-indigo-900/20 transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
+                >
+                  <Save size={20} />
+                  Salvar Orçamento
                 </button>
                 <button 
                   onClick={downloadPDF}
@@ -2004,52 +2206,6 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
           )}
         </div>
 
-        {/* History Section */}
-        {savedBudgets.length > 0 && (
-          <section className="space-y-4 pt-8 border-t border-[#2d374d]">
-            <div className="flex items-center justify-between px-2">
-              <p className="text-[10px] uppercase font-black text-gray-500 flex items-center gap-2">
-                <Clock size={12} />
-                Histórico de Orçamentos
-              </p>
-              <span className="text-[10px] font-bold text-gray-600">{savedBudgets.length} salvos</span>
-            </div>
-            
-            <div className="space-y-3">
-              {savedBudgets.map((saved) => (
-                <div 
-                  key={saved.id} 
-                  className="bg-[#161c2d] border border-[#232d42] rounded-2xl p-4 flex items-center justify-between hover:border-blue-500/50 transition-all group"
-                >
-                  <div className="flex items-center gap-4 flex-1 cursor-pointer" onClick={() => loadBudget(saved)}>
-                    <div className="bg-blue-500/10 p-3 rounded-xl text-blue-500 group-hover:bg-blue-500 group-hover:text-white transition-all">
-                      <FileText size={20} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-black text-white">{saved.clientName || 'Cliente sem nome'}</p>
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
-                        {saved.fileName || 'Sem título'} • {new Date(saved.date).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="text-right hidden sm:block">
-                      <p className="text-sm font-black text-emerald-400">R$ {saved.finalPrice.toFixed(2)}</p>
-                      <p className="text-[8px] text-gray-600 font-bold uppercase">{saved.filament.type}</p>
-                    </div>
-                    <button 
-                      onClick={() => deleteBudget(saved.id)}
-                      className="p-2 text-gray-600 hover:text-red-500 transition-colors"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
         <footer className="text-center pt-8 space-y-2">
           <p className="text-[10px] text-gray-600 font-bold uppercase tracking-widest">
             PRINTCALC-PRO • INTELIGÊNCIA EM CUSTOS 3D
@@ -2058,6 +2214,83 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
             Derretendo Ideias 3D
           </p>
         </footer>
+      </div>
+      {/* History Section */}
+      <div className="mt-12 pt-12 border-t border-[#1e2638]">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-500">
+              <History size={20} />
+            </div>
+            <div>
+              <h2 className="text-lg font-black uppercase tracking-tight">Histórico de Orçamentos</h2>
+              <p className="text-xs text-gray-500 font-medium">Gerencie seus orçamentos salvos</p>
+            </div>
+          </div>
+          <div className="text-xs font-bold text-gray-500 bg-[#1e2638] px-3 py-1 rounded-full">
+            {savedBudgets.length} {savedBudgets.length === 1 ? 'Orçamento' : 'Orçamentos'}
+          </div>
+        </div>
+
+        {savedBudgets.length === 0 ? (
+          <div className="bg-[#1e2638]/50 border-2 border-dashed border-[#1e2638] rounded-2xl p-12 text-center">
+            <div className="w-16 h-16 bg-[#1e2638] rounded-full flex items-center justify-center mx-auto mb-4 text-gray-600">
+              <FileText size={32} />
+            </div>
+            <p className="text-gray-500 font-bold uppercase text-xs tracking-widest">Nenhum orçamento salvo ainda</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {savedBudgets.map((saved) => (
+              <motion.div
+                key={saved.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-[#1e2638] border border-[#2d374d] rounded-2xl p-5 hover:border-blue-500 transition-all group relative"
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h3 className="font-black text-sm uppercase truncate max-w-[180px]">{saved.name}</h3>
+                    <p className="text-[10px] text-gray-500 font-bold">{new Date(saved.date).toLocaleDateString()} • {new Date(saved.date).toLocaleTimeString()}</p>
+                  </div>
+                  <div className="text-blue-500 font-black text-sm">
+                    R$ {saved.totalPrice.toFixed(2)}
+                  </div>
+                </div>
+
+                <div className="space-y-2 mb-4">
+                  <div className="flex justify-between text-[10px] font-bold uppercase text-gray-500">
+                    <span>Material</span>
+                    <span className="text-gray-300">{saved.filamentType}</span>
+                  </div>
+                  <div className="flex justify-between text-[10px] font-bold uppercase text-gray-500">
+                    <span>Impressora</span>
+                    <span className="text-gray-300">{saved.printerModel}</span>
+                  </div>
+                  <div className="flex justify-between text-[10px] font-bold uppercase text-gray-500">
+                    <span>Peso Total</span>
+                    <span className="text-gray-300">{saved.totalWeight.toFixed(1)}g</span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => loadBudget(saved)}
+                    className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-black uppercase py-2 rounded-lg transition-all flex items-center justify-center gap-2"
+                  >
+                    <Download size={12} /> Carregar
+                  </button>
+                  <button
+                    onClick={() => deleteBudget(saved.id)}
+                    className="w-10 h-10 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-lg transition-all flex items-center justify-center"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
       </div>
     </main>
   );
