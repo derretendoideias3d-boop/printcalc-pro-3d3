@@ -42,7 +42,10 @@ import {
   UserPlus,
   Edit2,
   Plus,
-  Minus
+  Minus,
+  ChevronUp,
+  ChevronDown,
+  Grid
 } from 'lucide-react';
 import { auth, db } from './firebase';
 import { 
@@ -171,48 +174,56 @@ const SLICERS = [
     name: "Ultimaker Cura",
     description: "Muito popular e gratuito. Funciona com quase todas as impressoras 3D. Ideal para iniciantes e profissionais.",
     url: "https://ultimaker.com/software/ultimaker-cura",
+    protocol: "cura://",
     icon: "C"
   },
   {
     name: "PrusaSlicer",
     description: "Muito usado por usuários avançados. Baseado no antigo Slic3r. Suporta impressoras FDM e também resina.",
     url: "https://www.prusa3d.com/prusaslicer/",
+    protocol: "prusaslicer://",
     icon: "P"
   },
   {
     name: "Bambu Studio",
     description: "Fatiador oficial das impressoras Bambu Lab. Otimizado para alta velocidade e AMS (multicolor).",
     url: "https://bambulab.com/en/download/studio",
+    protocol: "bambulab://",
     icon: "B"
   },
   {
     name: "Orca Slicer",
     description: "Baseado no Bambu Studio e PrusaSlicer. Muito usado para calibração e impressão multicolor.",
     url: "https://github.com/SoftFever/OrcaSlicer/releases",
+    protocol: "orcaslicer://",
     icon: "O"
   },
   {
     name: "Creality Print",
     description: "Fatiador oficial das impressoras Creality. Interface simples para Ender, K1, CR etc.",
     url: "https://www.creality.com/pages/download-software",
+    protocol: "crealityprint://",
     icon: "Cr"
   },
   {
     name: "Simplify3D",
     description: "Fatiador profissional pago. Muito controle avançado de impressão.",
     url: "https://www.simplify3d.com/",
+    protocol: "simplify3d://",
     icon: "S"
   },
   {
     name: "IdeaMaker",
     description: "Criado pela Raise3D. Interface moderna e fácil de usar.",
     url: "https://www.raise3d.com/ideamaker/",
+    protocol: "ideamaker://",
     icon: "I"
   },
   {
     name: "SuperSlicer",
     description: "Versão avançada do PrusaSlicer. Muitas opções de ajuste fino.",
     url: "https://github.com/supermerill/SuperSlicer/releases",
+    protocol: "superslicer://",
     icon: "Ss"
   }
 ];
@@ -244,7 +255,7 @@ const PRINTER_MODELS: Record<string, string[]> = {
 const PRINTER_BRANDS = Object.keys(PRINTER_MODELS);
 
 const FILAMENT_BRANDS = [
-  "Bambu Lab", "eSun", "SUNLU", "Overture", "Hatchbox", "Polymaker", "ColorFabb", "Prusament",
+  "Bambu Lab", "eSun", "SUNLU", "Overture", "Hatchbox", "PolyFlow", "Polymaker", "ColorFabb", "Prusament",
   "3D Fila", "Voolt3D", "Cliever", "Filacorp", "UP3D", "GTMax3D", "3DLab", "National 3D", "Tríade3D",
   "Genérico", "Outra"
 ];
@@ -348,7 +359,7 @@ const Input = ({ type = "text", value, onChange, placeholder, suffix }: { type?:
   <div className="relative">
     <input 
       type={type}
-      value={value ?? ''}
+      value={value === 0 ? '0' : (value || '')}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       className="w-full bg-[#1e2638] border border-[#2d374d] text-white rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500 transition-colors hover:bg-[#1e2638] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -357,22 +368,6 @@ const Input = ({ type = "text", value, onChange, placeholder, suffix }: { type?:
       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 font-medium pointer-events-none">
         {suffix}
       </span>
-    )}
-    {type === "number" && (
-      <div className="absolute right-10 top-1/2 -translate-y-1/2 flex flex-col opacity-0 group-hover/label:opacity-100 transition-opacity">
-        <button 
-          onClick={() => onChange((Number(value) + 1).toString())}
-          className="text-gray-600 hover:text-blue-500 p-0.5"
-        >
-          <ChevronRight size={10} className="-rotate-90" />
-        </button>
-        <button 
-          onClick={() => onChange((Number(value) - 1).toString())}
-          className="text-gray-600 hover:text-blue-500 p-0.5"
-        >
-          <ChevronRight size={10} className="rotate-90" />
-        </button>
-      </div>
     )}
   </div>
 );
@@ -411,7 +406,21 @@ export default function Calculator() {
     brand: "Creality",
     model: "Ender 3 V3",
     speed: 250,
-    power: 150
+    power: 150,
+    colors: ""
+  });
+
+  const [printSettings, setPrintSettings] = useState({
+    layerHeight: 0.2,
+    wallLoops: 2,
+    topLayers: 3,
+    bottomLayers: 3,
+    infillDensity: 15,
+    infillPattern: "Giroide",
+    support: false,
+    brim: false,
+    nozzleTemp: 220,
+    bedTemp: 60
   });
 
   const [budget, setBudget] = useState({
@@ -423,7 +432,7 @@ export default function Calculator() {
     fileName: "",
     projectImage: null as string | null,
     items: [
-      { id: Date.now().toString(), name: "Peça 1", weight: 50, time: 2.5, price: 0 }
+      { id: Date.now().toString(), name: "Peça 1", weight: 0, time: 0, quantity: 1, price: 0, color: "" }
     ],
     energyPrice: 0.85, // R$/kWh
     failRisk: 10, // %
@@ -431,51 +440,72 @@ export default function Calculator() {
     packagingCost: 0,
     shippingCost: 0,
     platformFee: 0,
-    markup: 40
+    markup: 40,
+    manualMode: false,
+    manualFinalPrice: 0
   });
 
-  const [savedBudgets, setSavedBudgets] = useState<any[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('printcalc_budgets');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          console.error("Error loading saved budgets", e);
-        }
+  const [uploadedFile, setUploadedFile] = useState<{ url: string | null, type: string | null }>({ url: null, type: null });
+  const [savedBudgets, setSavedBudgets] = useState<any[]>([]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('printcalc_budgets');
+    if (saved) {
+      try {
+        setSavedBudgets(JSON.parse(saved));
+      } catch (e) {
+        console.error("Erro ao carregar orçamentos salvos");
       }
     }
-    return [];
-  });
-  const [uploadedFile, setUploadedFile] = useState<{ url: string | null, type: string | null }>({ url: null, type: null });
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('printcalc_budgets', JSON.stringify(savedBudgets));
+  }, [savedBudgets]);
 
   const results = useMemo(() => {
-    const totalWeight = budget.items.reduce((sum, item) => sum + (item.weight || 0), 0);
-    const totalTime = budget.items.reduce((sum, item) => sum + (item.time || 0), 0);
-    const totalItemsPrice = budget.items.reduce((sum, item) => sum + (item.price || 0), 0);
+    // Helper to calculate price for a single item (unit) including markup
+    const calculateItemUnitPrice = (weight: number, time: number) => {
+      const mat = (weight / 1000) * filament.pricePerKg;
+      const nrg = (time * printer.power / 1000) * budget.energyPrice;
+      const wear = time * 0.5; // R$ 0.50 per hour for wear
+      const risk = (mat + nrg + wear) * (budget.failRisk / 100);
+      const mfg = mat + nrg + wear + risk;
+      return mfg * (1 + budget.markup / 100);
+    };
+
+    const itemResults = budget.items.map(item => {
+      const unitPrice = calculateItemUnitPrice(item.weight || 0, item.time || 0);
+      const totalPrice = unitPrice * (item.quantity || 1);
+      return { ...item, unitPrice, totalPrice };
+    });
+
+    const totalWeight = budget.items.reduce((sum, item) => sum + ((item.weight || 0) * (item.quantity || 1)), 0);
+    const totalTime = budget.items.reduce((sum, item) => sum + ((item.time || 0) * (item.quantity || 1)), 0);
+    
+    // Total price of all items (manufacturing + markup)
+    const totalItemsPrice = itemResults.reduce((sum, item) => sum + item.totalPrice, 0);
 
     const materialCost = (totalWeight / 1000) * filament.pricePerKg;
     const energyCost = (totalTime * printer.power / 1000) * budget.energyPrice;
-    const wearCost = totalTime * 0.5; // R$ 0.50 per hour for wear/maintenance
+    const wearCost = totalTime * 0.5;
     const failRiskCost = (materialCost + energyCost + wearCost) * (budget.failRisk / 100);
     
     const totalMfgCost = materialCost + energyCost + wearCost + failRiskCost + budget.laborCost + budget.packagingCost;
     
-    const markupAmount = totalMfgCost * (budget.markup / 100);
-    const calculatedBase = totalMfgCost + markupAmount;
+    // Fixed costs also get markup
+    const fixedCosts = budget.laborCost + budget.packagingCost;
+    const fixedCostsWithMarkup = fixedCosts * (1 + budget.markup / 100);
     
-    // If manual prices are set, we use them as the base price.
-    // Otherwise, we use the calculated cost + markup.
-    const basePrice = totalItemsPrice > 0 ? totalItemsPrice : calculatedBase;
+    const basePrice = totalItemsPrice + fixedCostsWithMarkup;
     
-    // Shipping is added after the base price.
     const subtotalWithShipping = basePrice + budget.shippingCost;
-    
-    // Platform fee is calculated on the subtotal including shipping.
     const feeAmount = subtotalWithShipping * (budget.platformFee / 100);
-    const finalPrice = subtotalWithShipping + feeAmount;
+    const calculatedFinalPrice = subtotalWithShipping + feeAmount;
+    const finalPrice = budget.manualMode ? budget.manualFinalPrice : calculatedFinalPrice;
 
     return {
+      itemResults,
       totalWeight,
       totalTime,
       totalItemsPrice,
@@ -484,9 +514,9 @@ export default function Calculator() {
       wearCost,
       failRiskCost,
       totalMfgCost,
-      markupAmount,
       basePrice,
       feeAmount,
+      calculatedFinalPrice,
       finalPrice
     };
   }, [budget, filament, printer]);
@@ -506,7 +536,20 @@ export default function Calculator() {
       brand: "Creality",
       model: "Ender 3 V3",
       speed: 250,
-      power: 150
+      power: 150,
+      colors: ""
+    });
+    setPrintSettings({
+      layerHeight: 0.2,
+      wallLoops: 2,
+      topLayers: 3,
+      bottomLayers: 3,
+      infillDensity: 15,
+      infillPattern: "Giroide",
+      support: false,
+      brim: false,
+      nozzleTemp: 220,
+      bedTemp: 60
     });
     setBudget({
       id: null,
@@ -517,7 +560,7 @@ export default function Calculator() {
       fileName: "",
       projectImage: null,
       items: [
-        { id: Date.now().toString(), name: "Peça 1", weight: 50, time: 2.5, price: 0 }
+        { id: Date.now().toString(), name: "Peça 1", weight: 0, time: 0, quantity: 1, price: 0, color: "" }
       ],
       energyPrice: 0.85,
       failRisk: 10,
@@ -525,13 +568,15 @@ export default function Calculator() {
       packagingCost: 0,
       shippingCost: 0,
       platformFee: 0,
-      markup: 40
+      markup: 40,
+      manualMode: false,
+      manualFinalPrice: 0
     });
     setUploadedFile({ url: null, type: null });
   }
 
   const nextStep = () => {
-    setStep(prev => Math.min(prev + 1, 3));
+    setStep(prev => Math.min(prev + 1, 4));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -559,6 +604,7 @@ export default function Calculator() {
       setUploadedFile({ url, type: 'stl' });
     } else if (file.name.toLowerCase().endsWith('.gcode')) {
       const reader = new FileReader();
+      const url = URL.createObjectURL(file);
       reader.onload = (event) => {
         const content = event.target?.result as string;
         
@@ -607,7 +653,7 @@ export default function Calculator() {
         }
       };
       reader.readAsText(file.slice(0, 100000)); // Read first 100KB for comments
-      setUploadedFile({ url: null, type: 'gcode' });
+      setUploadedFile({ url, type: 'gcode' });
     } else {
       setUploadedFile({ url: null, type: 'other' });
     }
@@ -617,59 +663,37 @@ export default function Calculator() {
     const newBudget = {
       ...budget,
       id: budget.id || Date.now().toString(),
+      date: new Date().toISOString(),
       filament,
       printer,
-      results,
-      updatedAt: new Date().toISOString()
+      printSettings,
+      finalPrice: results.finalPrice
     };
 
-    let updated;
     if (budget.id) {
-      updated = savedBudgets.map(b => b.id === budget.id ? newBudget : b);
+      setSavedBudgets(prev => prev.map(b => b.id === budget.id ? newBudget : b));
     } else {
-      updated = [newBudget, ...savedBudgets];
+      setSavedBudgets(prev => [newBudget, ...prev]);
+      setBudget(prev => ({ ...prev, id: newBudget.id }));
     }
-
-    setSavedBudgets(updated);
-    localStorage.setItem('printcalc_budgets', JSON.stringify(updated));
-    setBudget(prev => ({ ...prev, id: newBudget.id }));
-    alert('Orçamento salvo com sucesso!');
+    alert("Orçamento salvo com sucesso!");
   };
 
   const deleteBudget = (id: string) => {
-    if (confirm('Tem certeza que deseja excluir este orçamento?')) {
-      const updated = savedBudgets.filter(b => b.id !== id);
-      setSavedBudgets(updated);
-      localStorage.setItem('printcalc_budgets', JSON.stringify(updated));
+    if (confirm("Deseja realmente excluir este orçamento?")) {
+      setSavedBudgets(prev => prev.filter(b => b.id !== id));
       if (budget.id === id) {
-        resetCalculator();
+        setBudget(p => ({ ...p, id: null }));
       }
     }
   };
 
-  const loadBudget = (b: any) => {
-    setBudget({
-      id: b.id,
-      clientName: b.clientName || "",
-      clientPhone: b.clientPhone || "",
-      clientEmail: b.clientEmail || "",
-      clientNotes: b.clientNotes || "",
-      fileName: b.fileName || "",
-      projectImage: b.projectImage || null,
-      items: b.items || [
-        { id: Date.now().toString(), name: b.fileName || "Peça 1", weight: b.weight || 0, time: b.time || 0, price: 0 }
-      ],
-      energyPrice: b.energyPrice || 0.85,
-      failRisk: b.failRisk || 10,
-      laborCost: b.laborCost || 0,
-      packagingCost: b.packagingCost || 0,
-      shippingCost: b.shippingCost || 0,
-      platformFee: b.platformFee || 0,
-      markup: b.markup || 40
-    });
-    if (b.filament) setFilament(b.filament);
-    if (b.printer) setPrinter(b.printer);
-    setStep(3);
+  const loadBudget = (saved: any) => {
+    setBudget(saved);
+    setFilament(saved.filament);
+    setPrinter(saved.printer);
+    setPrintSettings(saved.printSettings);
+    setStep(4);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -772,18 +796,19 @@ export default function Calculator() {
         doc.setFont('helvetica', 'bold');
         doc.text('PEÇAS DO PROJETO', 14, currentY);
         
-        const itemRows = budget.items.map((item, index) => [
+        const itemRows = results.itemResults.map((item, index) => [
           index + 1,
           item.name || `Peça ${index + 1}`,
+          item.color || '-',
           item.quantity || 1,
           `${item.weight}g`,
           `${item.time}h`,
-          `R$ ${(item.price || 0).toFixed(2)}`
+          `R$ ${item.totalPrice.toFixed(2)}`
         ]);
 
         autoTable(doc, {
           startY: currentY + 5,
-          head: [['#', 'Nome da Peça', 'Qtd', 'Peso', 'Tempo', 'Valor']],
+          head: [['#', 'Nome da Peça', 'Cor', 'Qtd', 'Peso', 'Tempo', 'Valor']],
           body: itemRows,
           theme: 'grid',
           headStyles: { fillColor: [100, 100, 100] },
@@ -794,40 +819,66 @@ export default function Calculator() {
         currentY = (lastTable && lastTable.finalY) ? lastTable.finalY + 15 : 
                    (lastTable && lastTable.cursor) ? lastTable.cursor.y + 15 : currentY + 40;
 
+        // --- Print Settings Table ---
+        autoTable(doc, {
+          startY: currentY,
+          head: [['Configuração de Impressão', 'Valor']],
+          body: [
+            ['Altura da Camada', `${printSettings.layerHeight}mm`],
+            ['Paredes (Wall Loops)', `${printSettings.wallLoops}`],
+            ['Preenchimento (Infill)', `${printSettings.infillDensity}% (${printSettings.infillPattern})`],
+            ['Camadas Topo/Base', `${printSettings.topLayers} / ${printSettings.bottomLayers}`],
+            ['Suportes', printSettings.support ? 'Sim' : 'Não'],
+            ['Brim (Borda)', printSettings.brim ? 'Sim' : 'Não'],
+          ],
+          theme: 'grid',
+          headStyles: { fillColor: [80, 80, 80] },
+          styles: { fontSize: 8 },
+          margin: { right: 105 } // Half width
+        });
+
         // --- Budget Summary Table ---
         autoTable(doc, {
           startY: currentY,
           head: [['Resumo Financeiro', 'Valor']],
           body: [
-            ['Material', `${filament.brand} ${filament.type}`],
-            ['Total de Peso', `${results.totalWeight}g`],
-            ['Total de Tempo', `${results.totalTime}h`],
             ['Custo de Material', `R$ ${results.materialCost.toFixed(2)}`],
             ['Custo de Energia', `R$ ${results.energyCost.toFixed(2)}`],
             ['Mão de Obra', `R$ ${budget.laborCost.toFixed(2)}`],
-            ['Embalagem', `R$ ${budget.packagingCost.toFixed(2)}`],
+            ['Embalagem e Logística', `R$ ${budget.packagingCost.toFixed(2)}`],
             ['Frete / Envio', `R$ ${budget.shippingCost.toFixed(2)}`],
             ['Taxas de Plataforma', `R$ ${results.feeAmount.toFixed(2)}`],
-            ['PREÇO FINAL', `R$ ${results.finalPrice.toFixed(2)}`],
+            ['VALOR TOTAL', `R$ ${results.finalPrice.toFixed(2)}`],
           ],
           theme: 'striped',
-          headStyles: { fillColor: [37, 99, 235] },
-          styles: { fontSize: 9, cellPadding: 3 },
+          headStyles: { fillColor: [37, 99, 235], halign: 'center' },
+          styles: { fontSize: 8, cellPadding: 2 },
           columnStyles: {
-            1: { halign: 'right', fontStyle: 'bold' }
-          }
+            1: { halign: 'right', fontStyle: 'bold', textColor: [37, 99, 235] }
+          },
+          margin: { left: 105 } // Other half
         });
+
+        const lastTableSummary = (doc as any).lastAutoTable;
+        currentY = (lastTableSummary && lastTableSummary.finalY) ? lastTableSummary.finalY + 15 : currentY + 50;
         
         if (budget.clientNotes) {
           const lastTableSummary = (doc as any).lastAutoTable;
-          const finalY = (lastTableSummary && lastTableSummary.finalY) ? lastTableSummary.finalY + 10 :
-                         (lastTableSummary && lastTableSummary.cursor) ? lastTableSummary.cursor.y + 10 : currentY + 20;
+          const finalY = (lastTableSummary && lastTableSummary.finalY) ? lastTableSummary.finalY + 15 :
+                         (lastTableSummary && lastTableSummary.cursor) ? lastTableSummary.cursor.y + 15 : currentY + 20;
+          
+          doc.setFillColor(245, 245, 245);
+          doc.rect(14, finalY, 182, 30, 'F');
+          
           doc.setFontSize(10);
-          doc.setTextColor(0, 0, 0);
-          doc.text('OBSERVAÇÕES:', 14, finalY);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(37, 99, 235);
+          doc.text('OBSERVAÇÕES E NOTAS:', 18, finalY + 8);
+          
           doc.setFont('helvetica', 'normal');
           doc.setFontSize(9);
-          doc.text(budget.clientNotes, 14, finalY + 5, { maxWidth: 180 });
+          doc.setTextColor(50, 50, 50);
+          doc.text(budget.clientNotes, 18, finalY + 15, { maxWidth: 174, lineHeightFactor: 1.5 });
         }
       } else {
         doc.setFontSize(12);
@@ -877,22 +928,31 @@ export default function Calculator() {
   };
 
   const sendWhatsApp = () => {
+    const itemsList = budget.items.map(item => 
+      `• ${item.name} (${item.quantity}x)${item.color ? ` [Cor: ${item.color}]` : ''}: ${item.weight}g / ${item.time}h`
+    ).join('\n');
+
     const message = `*ORÇAMENTO DE IMPRESSÃO 3D*
 ------------------------------
 *Cliente:* ${budget.clientName || 'N/A'}
 ${budget.clientPhone ? `*Contato:* ${budget.clientPhone}\n` : ''}*Projeto:* ${budget.fileName || 'N/A'}
 *Material:* ${filament.brand} ${filament.type}
+${printer.colors ? `*Cores Disponíveis:* ${printer.colors}\n` : ''}
+*CONFIGURAÇÃO:*
+• Camada: ${printSettings.layerHeight}mm
+• Infill: ${printSettings.infillDensity}% (${printSettings.infillPattern})
+• Suportes: ${printSettings.support ? 'Sim' : 'Não'}
+
+*PEÇAS:*
+${itemsList}
+
+*RESUMO:*
 *Peso Total:* ${results.totalWeight}g
 *Tempo Total:* ${results.totalTime}h
 ------------------------------
-*DETALHAMENTO DE CUSTOS:*
-• Material: R$ ${results.materialCost.toFixed(2)}
-• Energia: R$ ${results.energyCost.toFixed(2)}
-• Desgaste/Manutenção: R$ ${results.wearCost.toFixed(2)}
-• Mão de Obra: R$ ${budget.laborCost.toFixed(2)}
-• Embalagem: R$ ${budget.packagingCost.toFixed(2)}
-${budget.platformFee > 0 ? `• Taxas de Plataforma: R$ ${results.feeAmount.toFixed(2)}\n` : ''}${budget.shippingCost > 0 ? `• Envio/Frete: R$ ${budget.shippingCost.toFixed(2)}\n` : ''}
-*Investimento Total:* R$ ${results.finalPrice.toFixed(2)}
+*INVESTIMENTO:*
+*Valor Total: R$ ${results.finalPrice.toFixed(2)}*
+${budget.manualMode ? '_(Preço definido manualmente)_\n' : ''}
 ${budget.clientNotes ? `\n*Observações:* ${budget.clientNotes}` : ''}
 
 _Gerado por PRINTCALC-PRO_
@@ -902,10 +962,32 @@ _Derretendo Ideias 3D_`;
     window.open(url, '_blank');
   };
 
+  const copySettingsToClipboard = () => {
+    const text = `CONFIGURAÇÕES DE IMPRESSÃO - PRINTCALC PRO
+-------------------------------------------
+Material: ${filament.brand} ${filament.type}
+Temp. Bico: ${printSettings.nozzleTemp}°C
+Temp. Mesa: ${printSettings.bedTemp}°C
+Altura da Camada: ${printSettings.layerHeight}mm
+Paredes: ${printSettings.wallLoops}
+Preenchimento: ${printSettings.infillDensity}% (${printSettings.infillPattern})
+Suportes: ${printSettings.support ? 'Habilitado' : 'Desabilitado'}
+Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
+-------------------------------------------`;
+    navigator.clipboard.writeText(text);
+    alert("Configurações copiadas! Agora você pode colar no seu fatiador ou usar como referência.");
+  };
+
   const openLocalSlicer = (slicer: any) => {
-    // Attempt to open via protocol or just inform
-    if (slicer.name.includes('Bambu')) {
-      window.open('bambulab://', '_self');
+    // Attempt to open via protocol
+    if (slicer.protocol) {
+      window.location.assign(slicer.protocol);
+      // We also show a message since we can't detect if it opened
+      setTimeout(() => {
+        if (confirm(`Tentando abrir o ${slicer.name} via protocolo ${slicer.protocol}. Se o aplicativo não abrir, certifique-se de que ele está instalado. Deseja copiar as configurações de impressão agora?`)) {
+          copySettingsToClipboard();
+        }
+      }, 500);
     } else {
       alert(`Para abrir o ${slicer.name}, certifique-se de que ele está instalado no seu computador e use o atalho do sistema.`);
     }
@@ -960,10 +1042,10 @@ _Derretendo Ideias 3D_`;
               >
                 <RotateCcw size={18} />
               </button>
-              <span className="text-[10px] font-black text-blue-500 uppercase bg-blue-500/10 px-2 py-1 rounded-md">Passo {step}/3</span>
+              <span className="text-[10px] font-black text-blue-500 uppercase bg-blue-500/10 px-2 py-1 rounded-md">Passo {step}/4</span>
             </div>
             <div className="flex gap-1">
-              {[1, 2, 3].map(i => (
+              {[1, 2, 3, 4].map(i => (
                 <div key={i} className={`h-1 w-8 rounded-full transition-all duration-300 ${step >= i ? 'bg-blue-500' : 'bg-[#232d42]'}`} />
               ))}
             </div>
@@ -1162,6 +1244,18 @@ _Derretendo Ideias 3D_`;
                     suffix="Watts"
                   />
                 </InputGroup>
+
+                <InputGroup 
+                  label="Paleta de Cores Disponíveis" 
+                  icon={Edit2}
+                  tooltip="Liste as cores que você tem disponíveis para este filamento/impressora."
+                >
+                  <Input 
+                    value={printer.colors} 
+                    onChange={(v) => setPrinter(p => ({ ...p, colors: v }))} 
+                    placeholder="ex: Preto, Branco, Vermelho, Azul..."
+                  />
+                </InputGroup>
               </div>
             </motion.div>
           )}
@@ -1169,6 +1263,99 @@ _Derretendo Ideias 3D_`;
           {step === 3 && (
             <motion.div 
               key="step3"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <div className="flex items-center gap-2 text-gray-400">
+                <Settings size={16} />
+                <h2 className="text-sm font-bold uppercase tracking-wider font-display">Configuração de Impressão (Bambu Style)</h2>
+              </div>
+
+              <div className="bg-[#1e2638]/30 rounded-2xl border border-[#2d374d]/50 overflow-hidden">
+                <div className="flex bg-[#1e2638] border-b border-[#2d374d]">
+                  <div className="px-4 py-2 text-[10px] font-bold text-blue-500 border-b-2 border-blue-500 uppercase tracking-wider">Global</div>
+                </div>
+                
+                <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <p className="text-[10px] uppercase font-black text-gray-500">Qualidade e Camadas</p>
+                    <InputGroup label="Altura da Camada" icon={Layers} tooltip="Espessura de cada camada. Menor = mais detalhe, maior = mais rápido.">
+                      <Input type="number" value={printSettings.layerHeight} onChange={(v) => setPrintSettings(p => ({ ...p, layerHeight: parseFloat(v) || 0 }))} suffix="mm" />
+                    </InputGroup>
+                    <InputGroup label="Paredes (Wall Loops)" icon={Box} tooltip="Número de perímetros externos. Mais paredes = mais resistência.">
+                      <Input type="number" value={printSettings.wallLoops} onChange={(v) => setPrintSettings(p => ({ ...p, wallLoops: parseInt(v) || 0 }))} suffix="voltas" />
+                    </InputGroup>
+                    <div className="grid grid-cols-2 gap-4">
+                      <InputGroup label="Camadas Topo" icon={ChevronUp} tooltip="Camadas sólidas no topo.">
+                        <Input type="number" value={printSettings.topLayers} onChange={(v) => setPrintSettings(p => ({ ...p, topLayers: parseInt(v) || 0 }))} />
+                      </InputGroup>
+                      <InputGroup label="Camadas Base" icon={ChevronDown} tooltip="Camadas sólidas na base.">
+                        <Input type="number" value={printSettings.bottomLayers} onChange={(v) => setPrintSettings(p => ({ ...p, bottomLayers: parseInt(v) || 0 }))} />
+                      </InputGroup>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 pt-2">
+                      <InputGroup label="Temp. Bico" icon={Thermometer} tooltip="Temperatura de extrusão.">
+                        <Input type="number" value={printSettings.nozzleTemp} onChange={(v) => setPrintSettings(p => ({ ...p, nozzleTemp: parseInt(v) || 0 }))} suffix="°C" />
+                      </InputGroup>
+                      <InputGroup label="Temp. Mesa" icon={Thermometer} tooltip="Temperatura da mesa aquecida.">
+                        <Input type="number" value={printSettings.bedTemp} onChange={(v) => setPrintSettings(p => ({ ...p, bedTemp: parseInt(v) || 0 }))} suffix="°C" />
+                      </InputGroup>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <p className="text-[10px] uppercase font-black text-gray-500">Preenchimento e Suporte</p>
+                    <InputGroup label="Densidade de Infill" icon={Grid} tooltip="Porcentagem de preenchimento interno.">
+                      <Input type="number" value={printSettings.infillDensity} onChange={(v) => setPrintSettings(p => ({ ...p, infillDensity: parseInt(v) || 0 }))} suffix="%" />
+                    </InputGroup>
+                    <InputGroup label="Padrão de Infill" icon={Grid} tooltip="Geometria do preenchimento interno.">
+                      <select 
+                        value={printSettings.infillPattern} 
+                        onChange={(e) => setPrintSettings(p => ({ ...p, infillPattern: e.target.value }))}
+                        className="w-full bg-[#1e2638] border border-[#2d374d] text-white rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500"
+                      >
+                        <option value="Giroide">Giroide</option>
+                        <option value="Grade">Grade</option>
+                        <option value="Cúbico">Cúbico</option>
+                        <option value="Linha">Linha</option>
+                        <option value="Colmeia">Colmeia</option>
+                      </select>
+                    </InputGroup>
+                    <div className="flex items-center justify-between p-3 bg-[#1e2638] rounded-xl border border-[#2d374d]">
+                      <div className="flex items-center gap-2">
+                        <Info size={14} className="text-blue-500" />
+                        <span className="text-xs font-bold uppercase">Gerar Suportes</span>
+                      </div>
+                      <button 
+                        onClick={() => setPrintSettings(p => ({ ...p, support: !p.support }))}
+                        className={`w-10 h-5 rounded-full transition-all relative ${printSettings.support ? 'bg-blue-600' : 'bg-gray-700'}`}
+                      >
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${printSettings.support ? 'left-6' : 'left-1'}`} />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-[#1e2638] rounded-xl border border-[#2d374d]">
+                      <div className="flex items-center gap-2">
+                        <Info size={14} className="text-blue-500" />
+                        <span className="text-xs font-bold uppercase">Habilitar Brim (Borda)</span>
+                      </div>
+                      <button 
+                        onClick={() => setPrintSettings(p => ({ ...p, brim: !p.brim }))}
+                        className={`w-10 h-5 rounded-full transition-all relative ${printSettings.brim ? 'bg-blue-600' : 'bg-gray-700'}`}
+                      >
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${printSettings.brim ? 'left-6' : 'left-1'}`} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {step === 4 && (
+            <motion.div 
+              key="step4"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
@@ -1305,15 +1492,15 @@ _Derretendo Ideias 3D_`;
                   </div>
 
                   <InputGroup 
-                    label="Observações do Cliente" 
+                    label="Observações e Requisitos do Cliente" 
                     icon={FileText}
-                    tooltip="Notas adicionais sobre o pedido ou cliente."
+                    tooltip="Notas adicionais sobre o pedido, acabamento, prazos ou requisitos especiais do cliente."
                   >
                     <textarea 
                       value={budget.clientNotes || ''}
                       onChange={(e) => setBudget(p => ({ ...p, clientNotes: e.target.value }))}
-                      placeholder="ex: Cliente solicitou acabamento liso..."
-                      className="w-full bg-[#1e2638] border border-[#2d374d] text-white rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500 transition-colors min-h-[80px]"
+                      placeholder="ex: Cliente solicitou acabamento liso, cor específica, ou prazo de entrega urgente..."
+                      className="w-full bg-[#1e2638] border border-[#2d374d] text-white rounded-xl p-4 text-sm focus:outline-none focus:border-blue-500 transition-colors min-h-[120px] resize-none"
                     />
                   </InputGroup>
                 </div>
@@ -1328,7 +1515,7 @@ _Derretendo Ideias 3D_`;
                     <button 
                       onClick={() => setBudget(p => ({ 
                         ...p, 
-                        items: [...p.items, { id: Date.now().toString(), name: `Peça ${p.items.length + 1}`, weight: 0, time: 0, price: 0 }] 
+                        items: [...p.items, { id: Date.now().toString(), name: `Peça ${p.items.length + 1}`, weight: 0, time: 0, price: 0, color: "" }] 
                       }))}
                       className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-lg font-bold flex items-center gap-1 transition-colors"
                     >
@@ -1351,7 +1538,7 @@ _Derretendo Ideias 3D_`;
                             </button>
                           )}
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
                           <div className="space-y-1">
                             <label className="text-[10px] text-gray-500 uppercase font-bold">Nome da Peça</label>
                             <input 
@@ -1367,44 +1554,72 @@ _Derretendo Ideias 3D_`;
                             />
                           </div>
                           <div className="space-y-1">
-                            <label className="text-[10px] text-gray-500 uppercase font-bold">Peso (g)</label>
+                            <label className="text-[10px] text-gray-500 uppercase font-bold">Qtd</label>
                             <input 
                               type="number"
-                              value={item.weight ?? 0}
+                              value={item.quantity ?? 1}
+                              onChange={(e) => {
+                                const newItems = [...budget.items];
+                                newItems[index].quantity = parseInt(e.target.value) || 1;
+                                setBudget(p => ({ ...p, items: newItems }));
+                              }}
+                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
+                              min="1"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-gray-500 uppercase font-bold">Cor da Peça</label>
+                            <input 
+                              type="text"
+                              value={item.color || ''}
+                              onChange={(e) => {
+                                const newItems = [...budget.items];
+                                newItems[index].color = e.target.value;
+                                setBudget(p => ({ ...p, items: newItems }));
+                              }}
+                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
+                              placeholder="ex: Preto"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-gray-500 uppercase font-bold">Peso (g) Un</label>
+                            <input 
+                              type="number"
+                              value={item.weight === 0 ? '0' : (item.weight || '')}
                               onChange={(e) => {
                                 const newItems = [...budget.items];
                                 newItems[index].weight = parseFloat(e.target.value) || 0;
                                 setBudget(p => ({ ...p, items: newItems }));
                               }}
                               className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
+                              placeholder="0"
                             />
                           </div>
                           <div className="space-y-1">
-                            <label className="text-[10px] text-gray-500 uppercase font-bold">Tempo (h)</label>
+                            <label className="text-[10px] text-gray-500 uppercase font-bold">Tempo (h) Un</label>
                             <input 
                               type="number"
-                              value={item.time ?? 0}
+                              value={item.time === 0 ? '0' : (item.time || '')}
                               onChange={(e) => {
                                 const newItems = [...budget.items];
                                 newItems[index].time = parseFloat(e.target.value) || 0;
                                 setBudget(p => ({ ...p, items: newItems }));
                               }}
                               className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
+                              placeholder="0"
                             />
                           </div>
                           <div className="space-y-1">
-                            <label className="text-[10px] text-gray-500 uppercase font-bold">Valor (R$)</label>
-                            <input 
-                              type="number"
-                              value={item.price ?? 0}
-                              onChange={(e) => {
-                                const newItems = [...budget.items];
-                                newItems[index].price = parseFloat(e.target.value) || 0;
-                                setBudget(p => ({ ...p, items: newItems }));
-                              }}
-                              className="w-full bg-[#151b2b] border border-[#2d374d] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
-                              placeholder="0.00"
-                            />
+                            <label className="text-[10px] text-blue-500 uppercase font-bold">Valor Unitário</label>
+                            <div className="w-full bg-[#151b2b] border border-blue-500/30 text-blue-400 rounded-lg px-3 py-2 text-xs font-bold">
+                              R$ {results.itemResults[index].unitPrice.toFixed(2)}
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-blue-500 uppercase font-bold">Valor Total</label>
+                            <div className="w-full bg-[#151b2b] border border-blue-500/30 text-blue-400 rounded-lg px-3 py-2 text-xs font-bold">
+                              R$ {results.itemResults[index].totalPrice.toFixed(2)}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1566,16 +1781,48 @@ _Derretendo Ideias 3D_`;
 
         {/* Results Section */}
         <section className="space-y-4">
+          <div className="flex items-center justify-between px-2">
+            <p className="text-[10px] uppercase font-black text-gray-500 flex items-center gap-2">
+              <DollarSign size={12} />
+              Resumo Financeiro
+            </p>
+            <button 
+              onClick={() => setBudget(p => ({ ...p, manualMode: !p.manualMode, manualFinalPrice: p.manualMode ? 0 : results.finalPrice }))}
+              className={`text-[10px] font-bold px-3 py-1 rounded-lg transition-all flex items-center gap-2 ${budget.manualMode ? 'bg-orange-500 text-white' : 'bg-[#1e2638] text-gray-400'}`}
+            >
+              {budget.manualMode ? <Settings size={12} /> : <Zap size={12} />}
+              {budget.manualMode ? 'Modo Manual Ativo' : 'Ativar Modo Manual'}
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Card className="flex flex-col justify-center border-l-4 border-l-blue-500 hover:bg-[#161c2d] transition-none">
-              <p className="text-[10px] uppercase font-black text-gray-500">Custo Total de Fab.</p>
+              <p className="text-[10px] uppercase font-black text-gray-500">Custo Real de Fab.</p>
               <p className="text-2xl font-black text-blue-400 font-display">R$ {results.totalMfgCost.toFixed(2)}</p>
             </Card>
-            <Card className="flex flex-col justify-center border-l-4 border-l-emerald-500 hover:bg-[#161c2d] transition-none">
-              <p className="text-[10px] uppercase font-black text-gray-500">Preço Sugerido</p>
-              <p className="text-2xl font-black text-emerald-400 font-display">R$ {results.finalPrice.toFixed(2)}</p>
+            <Card className={`flex flex-col justify-center border-l-4 transition-all ${budget.manualMode ? 'border-l-orange-500 bg-orange-500/5' : 'border-l-emerald-500 hover:bg-[#161c2d]'}`}>
+              <p className="text-[10px] uppercase font-black text-gray-500">{budget.manualMode ? 'Preço Manual Definido' : 'Preço Sugerido (Auto)'}</p>
+              {budget.manualMode ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-2xl font-black text-orange-400 font-display">R$</span>
+                  <input 
+                    type="number"
+                    value={budget.manualFinalPrice}
+                    onChange={(e) => setBudget(p => ({ ...p, manualFinalPrice: parseFloat(e.target.value) || 0 }))}
+                    className="bg-transparent border-b border-orange-500/50 text-2xl font-black text-orange-400 font-display focus:outline-none w-full"
+                  />
+                </div>
+              ) : (
+                <p className="text-2xl font-black text-emerald-400 font-display">R$ {results.finalPrice.toFixed(2)}</p>
+              )}
             </Card>
           </div>
+
+          {budget.manualMode && (
+            <p className="text-[9px] text-orange-500/70 font-bold uppercase text-center italic">
+              * No modo manual, o valor total é definido por você, ignorando a soma automática de custos e margens.
+            </p>
+          )}
 
           <Card className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
@@ -1619,7 +1866,7 @@ _Derretendo Ideias 3D_`;
                 Voltar
               </button>
             )}
-            {step < 3 && (
+            {step < 4 && (
               <button 
                 onClick={nextStep}
                 className="flex-[2] bg-gradient-to-r from-blue-600 to-indigo-500 hover:from-blue-500 hover:to-indigo-400 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-900/40 transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
@@ -1630,7 +1877,7 @@ _Derretendo Ideias 3D_`;
             )}
           </div>
           
-          {step === 3 && (
+          {step === 4 && (
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button 
@@ -1641,21 +1888,27 @@ _Derretendo Ideias 3D_`;
                   WhatsApp
                 </button>
                 <button 
-                  onClick={sharePDF}
-                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-900/20 transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
-                >
-                  <Share2 size={20} />
-                  Compartilhar PDF
-                </button>
-              </div>
-
-                <button 
                   onClick={saveBudget}
-                  className="w-full bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 text-white font-bold py-4 rounded-2xl transition-all flex items-center justify-center gap-2"
+                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-900/20 transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
                 >
                   <Save size={20} />
                   {budget.id ? 'Atualizar Orçamento' : 'Salvar Orçamento'}
                 </button>
+                <button 
+                  onClick={sharePDF}
+                  className="w-full bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 text-white font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
+                >
+                  <Share2 size={20} />
+                  Compartilhar PDF
+                </button>
+                <button 
+                  onClick={downloadPDF}
+                  className="w-full bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 text-white font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
+                >
+                  <Download size={20} />
+                  Baixar PDF
+                </button>
+              </div>
                 
                 <div className="space-y-6">
                   {/* Download Links */}
@@ -1679,11 +1932,22 @@ _Derretendo Ideias 3D_`;
                             </span>
                             <div className="flex gap-2">
                               <button 
-                                onClick={() => openLocalSlicer(slicer)}
-                                className="p-1 hover:text-blue-500 transition-colors"
+                                onClick={() => {
+                                  openLocalSlicer(slicer);
+                                }}
+                                className="p-1 hover:text-blue-500 transition-colors flex items-center gap-1"
                                 title="Abrir no Computador"
                               >
                                 <ExternalLink size={12} />
+                                <span className="text-[8px] font-bold uppercase">Abrir</span>
+                              </button>
+                              <button 
+                                onClick={copySettingsToClipboard}
+                                className="p-1 hover:text-emerald-500 transition-colors flex items-center gap-1"
+                                title="Copiar Configurações"
+                              >
+                                <Save size={12} />
+                                <span className="text-[8px] font-bold uppercase">Configs</span>
                               </button>
                               <a 
                                 href={slicer.url}
@@ -1740,50 +2004,50 @@ _Derretendo Ideias 3D_`;
           )}
         </div>
 
-        {/* Saved Budgets Section - Visible in all steps */}
+        {/* History Section */}
         {savedBudgets.length > 0 && (
-          <Card className="bg-[#1e2638]/30 mt-8">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <RotateCcw size={16} className="text-blue-500" />
-                <h3 className="text-xs font-bold uppercase tracking-wider">Histórico de Orçamentos</h3>
-              </div>
-              <span className="text-[10px] font-bold text-gray-500 uppercase">{savedBudgets.length} itens</span>
+          <section className="space-y-4 pt-8 border-t border-[#2d374d]">
+            <div className="flex items-center justify-between px-2">
+              <p className="text-[10px] uppercase font-black text-gray-500 flex items-center gap-2">
+                <Clock size={12} />
+                Histórico de Orçamentos
+              </p>
+              <span className="text-[10px] font-bold text-gray-600">{savedBudgets.length} salvos</span>
             </div>
-            <div className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
-              {savedBudgets.map((item) => (
-                <div key={item.id} className="bg-[#1e2638] p-3 rounded-xl border border-[#2d374d] flex items-center justify-between group hover:border-blue-500/50 transition-all">
-                  <div className="flex-1 cursor-pointer" onClick={() => loadBudget(item)}>
-                    <p className="text-xs font-bold truncate">{item.clientName || 'Sem Cliente'} - {item.fileName}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <p className="text-[9px] text-gray-500 uppercase font-bold">
-                        {new Date(item.updatedAt).toLocaleDateString()} • R$ {item.results?.finalPrice?.toFixed(2) || '0.00'}
+            
+            <div className="space-y-3">
+              {savedBudgets.map((saved) => (
+                <div 
+                  key={saved.id} 
+                  className="bg-[#161c2d] border border-[#232d42] rounded-2xl p-4 flex items-center justify-between hover:border-blue-500/50 transition-all group"
+                >
+                  <div className="flex items-center gap-4 flex-1 cursor-pointer" onClick={() => loadBudget(saved)}>
+                    <div className="bg-blue-500/10 p-3 rounded-xl text-blue-500 group-hover:bg-blue-500 group-hover:text-white transition-all">
+                      <FileText size={20} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-white">{saved.clientName || 'Cliente sem nome'}</p>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+                        {saved.fileName || 'Sem título'} • {new Date(saved.date).toLocaleDateString()}
                       </p>
-                      {item.clientPhone && (
-                        <span className="text-[9px] text-green-500 font-bold bg-green-500/10 px-1.5 py-0.5 rounded">WhatsApp</span>
-                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-4">
+                    <div className="text-right hidden sm:block">
+                      <p className="text-sm font-black text-emerald-400">R$ {saved.finalPrice.toFixed(2)}</p>
+                      <p className="text-[8px] text-gray-600 font-bold uppercase">{saved.filament.type}</p>
+                    </div>
                     <button 
-                      onClick={() => loadBudget(item)}
-                      className="p-2 text-gray-600 hover:text-blue-500 transition-colors"
-                      title="Editar Orçamento"
-                    >
-                      <Edit2 size={14} />
-                    </button>
-                    <button 
-                      onClick={() => deleteBudget(item.id)}
+                      onClick={() => deleteBudget(saved.id)}
                       className="p-2 text-gray-600 hover:text-red-500 transition-colors"
-                      title="Excluir Orçamento"
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={18} />
                     </button>
                   </div>
                 </div>
               ))}
             </div>
-          </Card>
+          </section>
         )}
 
         <footer className="text-center pt-8 space-y-2">
