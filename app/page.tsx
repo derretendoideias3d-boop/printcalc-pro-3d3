@@ -295,6 +295,14 @@ const DEFAULT_DENSITIES: Record<string, number> = {
   "Wood": 1.15,
   "Metal Fill": 2.50,
   "Carbon Fiber": 1.30,
+  "Marble": 1.25,
+  "PEEK": 1.32,
+  "PEI": 1.27,
+  "PPS": 1.35,
+  "PC-ABS": 1.15,
+  "BVOH": 1.14,
+  "TPE": 1.15,
+  "TPC": 1.20,
 };
 
 const DEFAULT_PRINTER_DATA: Record<string, { power: number, speed: number }> = {
@@ -302,23 +310,23 @@ const DEFAULT_PRINTER_DATA: Record<string, { power: number, speed: number }> = {
   "X1": { power: 350, speed: 500 },
   "P1P": { power: 350, speed: 500 },
   "P1S": { power: 350, speed: 500 },
-  "A1": { power: 150, speed: 500 },
+  "A1": { power: 200, speed: 500 },
   "A1 Mini": { power: 150, speed: 500 },
   "Ender 3": { power: 150, speed: 60 },
   "Ender 3 V2": { power: 150, speed: 60 },
-  "Ender 3 V3": { power: 350, speed: 600 },
+  "Ender 3 V3": { power: 250, speed: 250 },
   "K1": { power: 350, speed: 600 },
   "K1 Max": { power: 350, speed: 600 },
-  "MK3S+": { power: 200, speed: 100 },
+  "MK3S+": { power: 200, speed: 80 },
   "MK4": { power: 200, speed: 200 },
-  "Mini+": { power: 150, speed: 100 },
-  "XL": { power: 350, speed: 200 },
-  "Neptune 4": { power: 350, speed: 500 },
-  "Neptune 4 Pro": { power: 350, speed: 500 },
+  "Mini+": { power: 150, speed: 80 },
+  "XL": { power: 400, speed: 200 },
+  "Neptune 4": { power: 250, speed: 250 },
+  "Neptune 4 Pro": { power: 250, speed: 250 },
   "Neptune 4 Max": { power: 400, speed: 500 },
-  "Sidewinder X2": { power: 350, speed: 150 },
+  "Sidewinder X2": { power: 250, speed: 100 },
   "Sidewinder X3": { power: 350, speed: 500 },
-  "Kobra 2": { power: 350, speed: 300 },
+  "Kobra 2": { power: 250, speed: 250 },
   "Kobra 2 Pro": { power: 350, speed: 500 },
   "Adventurer 4": { power: 250, speed: 150 },
 };
@@ -456,82 +464,6 @@ export default function Calculator() {
   });
 
   const [uploadedFile, setUploadedFile] = useState<{ url: string | null, type: string | null }>({ url: null, type: null });
-  const [savedBudgets, setSavedBudgets] = useState<any[]>([]);
-
-  // --- Fetch Budgets ---
-  const fetchBudgets = React.useCallback(async () => {
-    if (!user) return;
-    try {
-      const q = query(collection(db, "budgets"), where("userId", "==", user.uid), orderBy("date", "desc"));
-      const querySnapshot = await getDocs(q);
-      const budgets = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setSavedBudgets(budgets);
-    } catch (error) {
-      console.error("Erro ao buscar orçamentos:", error);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (user) {
-      fetchBudgets();
-    } else {
-      setSavedBudgets([]);
-    }
-  }, [user, fetchBudgets]);
-
-  const saveBudgetToFirestore = async () => {
-    if (!user) {
-      alert("Você precisa estar logado para salvar orçamentos.");
-      return;
-    }
-
-    try {
-      const budgetData = {
-        userId: user.uid,
-        name: budget.clientName || budget.fileName || "Orçamento Sem Nome",
-        date: new Date().toISOString(),
-        filamentType: filament.type,
-        printerModel: printer.model,
-        totalWeight: results.totalWeight,
-        totalTime: results.totalTime,
-        totalPrice: results.finalPrice,
-        data: {
-          filament,
-          printer,
-          printSettings,
-          budget,
-          results
-        }
-      };
-
-      await addDoc(collection(db, "budgets"), budgetData);
-      alert("Orçamento salvo com sucesso!");
-      fetchBudgets();
-    } catch (error) {
-      console.error("Erro ao salvar orçamento:", error);
-      alert("Erro ao salvar orçamento.");
-    }
-  };
-
-  const loadBudget = (saved: any) => {
-    const data = saved.data;
-    if (data.filament) setFilament(data.filament);
-    if (data.printer) setPrinter(data.printer);
-    if (data.printSettings) setPrintSettings(data.printSettings);
-    if (data.budget) setBudget(data.budget);
-    setStep(4);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const deleteBudget = async (id: string) => {
-    if (!confirm("Tem certeza que deseja excluir este orçamento?")) return;
-    try {
-      await deleteDoc(doc(db, "budgets", id));
-      fetchBudgets();
-    } catch (error) {
-      console.error("Erro ao excluir orçamento:", error);
-    }
-  };
 
   const downloadConfig = () => {
     const data = JSON.stringify(printSettings, null, 2);
@@ -912,11 +844,8 @@ export default function Calculator() {
           head: [['Resumo Financeiro', 'Valor']],
           body: [
             ['Custo de Material', `R$ ${results.materialCost.toFixed(2)}`],
-            ['Custo de Energia', `R$ ${results.energyCost.toFixed(2)}`],
             ['Mão de Obra', `R$ ${budget.laborCost.toFixed(2)}`],
             ['Embalagem e Logística', `R$ ${budget.packagingCost.toFixed(2)}`],
-            ['Frete / Envio', `R$ ${budget.shippingCost.toFixed(2)}`],
-            ['Taxas de Plataforma', `R$ ${results.feeAmount.toFixed(2)}`],
             ['VALOR TOTAL', `R$ ${results.finalPrice.toFixed(2)}`],
           ],
           theme: 'striped',
@@ -1048,17 +977,25 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
   };
 
   const openLocalSlicer = (slicer: any) => {
-    // Attempt to open via protocol
     if (slicer.protocol) {
-      window.location.assign(slicer.protocol);
-      // We also show a message since we can't detect if it opened
+      // Use location.href for protocol triggering
+      window.location.href = slicer.protocol;
+      
+      // Provide feedback since we can't detect success
+      const toast = document.createElement('div');
+      toast.className = "fixed bottom-10 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-full font-bold shadow-2xl z-[100] animate-bounce";
+      toast.innerText = `Tentando abrir ${slicer.name}...`;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+
+      // Offer to copy settings
       setTimeout(() => {
-        if (confirm(`Tentando abrir o ${slicer.name} via protocolo ${slicer.protocol}. Se o aplicativo não abrir, certifique-se de que ele está instalado. Deseja copiar as configurações de impressão agora?`)) {
+        if (confirm(`O ${slicer.name} foi solicitado. Se ele não abrir, verifique se está instalado. Deseja copiar as configurações de impressão para a área de transferência?`)) {
           copySettingsToClipboard();
         }
-      }, 500);
+      }, 1000);
     } else {
-      alert(`Para abrir o ${slicer.name}, certifique-se de que ele está instalado no seu computador e use o atalho do sistema.`);
+      alert(`Para abrir o ${slicer.name}, certifique-se de que ele está instalado no seu computador.`);
     }
   };
 
@@ -1483,6 +1420,26 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
                 <h2 className="text-sm font-bold uppercase tracking-wider font-display">Orçamento e Projeto</h2>
               </div>
 
+              {/* Resumo Rápido */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="bg-[#1e2638] border border-[#2d374d] p-4 rounded-2xl text-center">
+                  <p className="text-[8px] text-gray-500 uppercase font-black mb-1">Custo Total</p>
+                  <p className="text-lg font-black text-emerald-500">R$ {results.finalPrice.toFixed(2)}</p>
+                </div>
+                <div className="bg-[#1e2638] border border-[#2d374d] p-4 rounded-2xl text-center">
+                  <p className="text-[8px] text-gray-500 uppercase font-black mb-1">Peso Total</p>
+                  <p className="text-lg font-black text-blue-500">{results.totalWeight}g</p>
+                </div>
+                <div className="bg-[#1e2638] border border-[#2d374d] p-4 rounded-2xl text-center">
+                  <p className="text-[8px] text-gray-500 uppercase font-black mb-1">Tempo Total</p>
+                  <p className="text-lg font-black text-orange-500">{results.totalTime}h</p>
+                </div>
+                <div className="bg-[#1e2638] border border-[#2d374d] p-4 rounded-2xl text-center">
+                  <p className="text-[8px] text-gray-500 uppercase font-black mb-1">Margem</p>
+                  <p className="text-lg font-black text-indigo-500">{budget.markup}%</p>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="md:col-span-2 space-y-4">
                   <ModelViewer url={uploadedFile.url} type={uploadedFile.type} imageUrl={budget.projectImage} />
@@ -1681,7 +1638,11 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
                                   <button 
                                     onClick={() => {
                                       const newItems = [...budget.items];
-                                      newItems[index].quantity = Math.max(1, (newItems[index].quantity || 1) - 1);
+                                      const newQty = Math.max(1, (newItems[index].quantity || 1) - 1);
+                                      newItems[index].quantity = newQty;
+                                      if (newItems[index].manualUnitPrice) {
+                                        newItems[index].manualTotalPrice = newItems[index].manualUnitPrice * newQty;
+                                      }
                                       setBudget(p => ({ ...p, items: newItems }));
                                     }}
                                     className="p-1 text-gray-500 hover:text-white"
@@ -1693,7 +1654,11 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
                                     value={item.quantity ?? 1}
                                     onChange={(e) => {
                                       const newItems = [...budget.items];
-                                      newItems[index].quantity = parseInt(e.target.value) || 1;
+                                      const newQty = parseInt(e.target.value) || 1;
+                                      newItems[index].quantity = newQty;
+                                      if (newItems[index].manualUnitPrice) {
+                                        newItems[index].manualTotalPrice = newItems[index].manualUnitPrice * newQty;
+                                      }
                                       setBudget(p => ({ ...p, items: newItems }));
                                     }}
                                     className="w-full bg-transparent border-none text-center text-xs font-bold text-white focus:outline-none focus:ring-0 p-1"
@@ -1701,7 +1666,11 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
                                   <button 
                                     onClick={() => {
                                       const newItems = [...budget.items];
-                                      newItems[index].quantity = (newItems[index].quantity || 1) + 1;
+                                      const newQty = (newItems[index].quantity || 1) + 1;
+                                      newItems[index].quantity = newQty;
+                                      if (newItems[index].manualUnitPrice) {
+                                        newItems[index].manualTotalPrice = newItems[index].manualUnitPrice * newQty;
+                                      }
                                       setBudget(p => ({ ...p, items: newItems }));
                                     }}
                                     className="p-1 text-gray-500 hover:text-white"
@@ -1774,7 +1743,9 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
                                   value={item.manualUnitPrice || ''}
                                   onChange={(e) => {
                                     const newItems = [...budget.items];
-                                    newItems[index].manualUnitPrice = parseFloat(e.target.value) || 0;
+                                    const val = parseFloat(e.target.value) || 0;
+                                    newItems[index].manualUnitPrice = val;
+                                    newItems[index].manualTotalPrice = val * (newItems[index].quantity || 1);
                                     setBudget(p => ({ ...p, items: newItems }));
                                   }}
                                   className="w-full bg-blue-500/5 border border-blue-500/20 text-blue-400 rounded-xl px-3 py-2 text-xs font-black focus:outline-none focus:border-blue-500 placeholder:text-blue-500/20"
@@ -2059,17 +2030,55 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
           
           {step === 4 && (
             <div className="space-y-6">
+              {/* Bambu Studio Special Integration */}
+              <div className="bg-gradient-to-br from-[#00aeef]/10 to-transparent border border-[#00aeef]/30 rounded-2xl p-4 relative overflow-hidden group">
+                <div className="absolute -right-4 -top-4 opacity-10 group-hover:scale-110 transition-transform">
+                  <Printer size={100} className="text-[#00aeef]" />
+                </div>
+                <div className="flex items-start gap-4 relative z-10">
+                  <div className="w-12 h-12 bg-[#00aeef] rounded-xl flex items-center justify-center text-white shadow-lg shadow-[#00aeef]/20">
+                    <span className="font-black text-xl">B</span>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-sm font-black uppercase tracking-tight text-white">Integração Bambu Studio</h3>
+                    <p className="text-[10px] text-gray-400 font-medium mb-3">Abra o fatiador e envie as configurações automaticamente.</p>
+                    
+                    <div className="flex flex-wrap gap-2">
+                      <button 
+                        onClick={() => openLocalSlicer(SLICERS.find(s => s.name === "Bambu Studio"))}
+                        className="bg-[#00aeef] hover:bg-[#009cd6] text-white text-[10px] font-black uppercase px-4 py-2 rounded-lg transition-all flex items-center gap-2"
+                      >
+                        <ExternalLink size={12} /> Abrir Fatiador
+                      </button>
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText("C:\\Program Files\\Bambu Studio");
+                          alert("Caminho copiado: C:\\Program Files\\Bambu Studio");
+                        }}
+                        className="bg-white/5 hover:bg-white/10 text-gray-300 text-[10px] font-black uppercase px-4 py-2 rounded-lg transition-all flex items-center gap-2 border border-white/10"
+                      >
+                        <Save size={12} /> Copiar Caminho
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-white/5 flex items-center gap-2">
+                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                  <span className="text-[9px] text-gray-500 font-bold uppercase">Protocolo bambulab:// pronto</span>
+                </div>
+              </div>
+
               {/* Slicers Integration */}
               <div className="space-y-3">
                 <p className="text-[10px] uppercase font-black text-gray-500 flex items-center gap-2">
                   <Printer size={12} />
-                  Abrir Fatiador Instalado
+                  Outros Fatiadores Instalados
                 </p>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {SLICERS.slice(0, 4).map(slicer => (
+                  {SLICERS.filter(s => s.name !== "Bambu Studio").slice(0, 4).map(slicer => (
                     <button 
                       key={slicer.name}
-                      onClick={() => openSlicer(slicer.protocol)}
+                      onClick={() => openLocalSlicer(slicer)}
                       className="bg-[#1e2638] border border-[#2d374d] hover:border-blue-500 p-3 rounded-xl transition-all flex flex-col items-center gap-2 group"
                     >
                       <div className="w-8 h-8 bg-blue-500/10 rounded-lg flex items-center justify-center text-blue-500 font-black group-hover:bg-blue-500 group-hover:text-white transition-all">
@@ -2095,13 +2104,6 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
                 >
                   <Share2 size={20} />
                   Compartilhar PDF
-                </button>
-                <button 
-                  onClick={saveBudgetToFirestore}
-                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 rounded-2xl shadow-lg shadow-indigo-900/20 transition-all flex items-center justify-center gap-2 uppercase tracking-tighter"
-                >
-                  <Save size={20} />
-                  Salvar Orçamento
                 </button>
                 <button 
                   onClick={downloadPDF}
@@ -2214,83 +2216,6 @@ Brim: ${printSettings.brim ? 'Habilitado' : 'Desabilitado'}
             Derretendo Ideias 3D
           </p>
         </footer>
-      </div>
-      {/* History Section */}
-      <div className="mt-12 pt-12 border-t border-[#1e2638]">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-500">
-              <History size={20} />
-            </div>
-            <div>
-              <h2 className="text-lg font-black uppercase tracking-tight">Histórico de Orçamentos</h2>
-              <p className="text-xs text-gray-500 font-medium">Gerencie seus orçamentos salvos</p>
-            </div>
-          </div>
-          <div className="text-xs font-bold text-gray-500 bg-[#1e2638] px-3 py-1 rounded-full">
-            {savedBudgets.length} {savedBudgets.length === 1 ? 'Orçamento' : 'Orçamentos'}
-          </div>
-        </div>
-
-        {savedBudgets.length === 0 ? (
-          <div className="bg-[#1e2638]/50 border-2 border-dashed border-[#1e2638] rounded-2xl p-12 text-center">
-            <div className="w-16 h-16 bg-[#1e2638] rounded-full flex items-center justify-center mx-auto mb-4 text-gray-600">
-              <FileText size={32} />
-            </div>
-            <p className="text-gray-500 font-bold uppercase text-xs tracking-widest">Nenhum orçamento salvo ainda</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {savedBudgets.map((saved) => (
-              <motion.div
-                key={saved.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-[#1e2638] border border-[#2d374d] rounded-2xl p-5 hover:border-blue-500 transition-all group relative"
-              >
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h3 className="font-black text-sm uppercase truncate max-w-[180px]">{saved.name}</h3>
-                    <p className="text-[10px] text-gray-500 font-bold">{new Date(saved.date).toLocaleDateString()} • {new Date(saved.date).toLocaleTimeString()}</p>
-                  </div>
-                  <div className="text-blue-500 font-black text-sm">
-                    R$ {saved.totalPrice.toFixed(2)}
-                  </div>
-                </div>
-
-                <div className="space-y-2 mb-4">
-                  <div className="flex justify-between text-[10px] font-bold uppercase text-gray-500">
-                    <span>Material</span>
-                    <span className="text-gray-300">{saved.filamentType}</span>
-                  </div>
-                  <div className="flex justify-between text-[10px] font-bold uppercase text-gray-500">
-                    <span>Impressora</span>
-                    <span className="text-gray-300">{saved.printerModel}</span>
-                  </div>
-                  <div className="flex justify-between text-[10px] font-bold uppercase text-gray-500">
-                    <span>Peso Total</span>
-                    <span className="text-gray-300">{saved.totalWeight.toFixed(1)}g</span>
-                  </div>
-                </div>
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => loadBudget(saved)}
-                    className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-black uppercase py-2 rounded-lg transition-all flex items-center justify-center gap-2"
-                  >
-                    <Download size={12} /> Carregar
-                  </button>
-                  <button
-                    onClick={() => deleteBudget(saved.id)}
-                    className="w-10 h-10 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-lg transition-all flex items-center justify-center"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        )}
       </div>
     </main>
   );
